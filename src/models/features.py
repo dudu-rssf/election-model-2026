@@ -63,6 +63,7 @@ FEATURES_NUMERICAS: list[str] = [
     "anos_consecutivos_mesmo_partido",
     "anos_consecutivos_mesmo_grupo",
     "lag_share_1t",
+    "lag_share_1t_sucessao",
     "lag2_share_1t",
     "swing_share_1t",
     "volatilidade_partido",

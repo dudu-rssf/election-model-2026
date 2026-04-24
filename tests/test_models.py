@@ -74,6 +74,7 @@ def df_features_fake() -> pd.DataFrame:
         ),
         # historical
         "lag_share_1t": rng.beta(2, 5, size=n),
+        "lag_share_1t_sucessao": rng.beta(2, 5, size=n),
         "lag2_share_1t": rng.beta(2, 5, size=n),
         "swing_share_1t": rng.normal(0, 0.05, size=n),
         "volatilidade_partido": rng.uniform(0, 0.1, size=n),

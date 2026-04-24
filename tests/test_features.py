@@ -211,6 +211,46 @@ def test_historical_expande_universo_de_partidos(pres_long):
     assert len(sp14_psl) == 1
 
 
+def test_historical_sucessao_none_equivale_a_lag_original(pres_long):
+    """Sem mapeamento de sucessão, `lag_share_1t_sucessao` == `lag_share_1t`."""
+    hist = historical.features_historical(pres_long, sucessoes=None)
+    iguais = (
+        hist["lag_share_1t"].fillna(-999.0)
+        == hist["lag_share_1t_sucessao"].fillna(-999.0)
+    ).all()
+    assert iguais, "sem sucessão, as duas colunas devem ser idênticas"
+
+
+def test_historical_sucessao_remapeia_lag():
+    """Com mapping {PSL:2018:PSDB}, lag_sucessao de PSL_2018 aponta para PSDB_2014."""
+    # Fixture compacto: 1 município, 2 anos, partidos PT/PSDB/PSL.
+    # 2014: PT 400, PSDB 600. 2018: PT 300, PSL 700.
+    rows = []
+    for ano, d in [
+        (2014, {"PT": 400, "PSDB": 600}),
+        (2018, {"PT": 300, "PSL": 700}),
+    ]:
+        total = sum(d.values())
+        for partido, votos in d.items():
+            rows.append({
+                "ano_presidencial": ano, "id_municipio": "M1",
+                "sigla_partido": partido, "share_1t": votos / total,
+            })
+    pres_long_fake = pd.DataFrame(rows)
+
+    hist = historical.features_historical(
+        pres_long_fake, sucessoes={"PSL": {2018: "PSDB"}},
+    )
+    psl_2018 = hist[
+        (hist["sigla_partido"] == "PSL") & (hist["ano_presidencial"] == 2018)
+    ].iloc[0]
+
+    # Original: PSL em 2014 foi expandido pra 0 → lag_share_1t == 0
+    assert psl_2018["lag_share_1t"] == pytest.approx(0.0)
+    # Sucessão: canonical(PSL, 2018) = PSDB → lag = PSDB_2014 = 0.6
+    assert psl_2018["lag_share_1t_sucessao"] == pytest.approx(0.6)
+
+
 # ============================================================
 # continuity
 # ============================================================

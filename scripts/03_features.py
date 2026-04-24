@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.config import MODE_CFG, PATHS, set_global_seed, summary  # noqa: E402
+from src.config import CONFIG, MODE_CFG, PATHS, set_global_seed, summary  # noqa: E402
 from src.features import io as fio  # noqa: E402
 from src.features import (  # noqa: E402
     continuity,
@@ -109,7 +109,14 @@ def computar_features(insumos: dict, anos_presidenciais) -> dict:
     lp_part = local_power.alinhamento_partido_com_prefeito(insumos["painel"], partidos)
     log.info("local_power: %d linhas (mun) + %d linhas (partido)", len(lp_mun), len(lp_part))
 
-    hist = historical.features_historical(insumos["pres_long"], anos_presidenciais)
+    sucessoes = CONFIG.get("partido_sucessao") or {}
+    if sucessoes:
+        log.info("partido_sucessao: %d mapeamentos (siglas=%s)",
+                 sum(len(m) for m in sucessoes.values()),
+                 sorted(sucessoes.keys()))
+    hist = historical.features_historical(
+        insumos["pres_long"], anos_presidenciais, sucessoes=sucessoes,
+    )
     log.info("historical: %d linhas", len(hist))
 
     cont = continuity.features_continuity(

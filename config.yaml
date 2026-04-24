@@ -62,3 +62,29 @@ model:
     warmup: 2000
     samples: 2000
     target_accept: 0.9
+
+# ------------------------------------------------------------
+# Partido sucessão — mapeamento manual de fusões/migrações
+# ------------------------------------------------------------
+# Siglas partidárias não são identificadores estáveis no Brasil. Fusões,
+# renomeações e migrações de lideranças fazem "PL 2022 ≠ PL 2018" em termos
+# de campo político. Este mapeamento resolve o caso: `lag_share_1t_sucessao`
+# em src/features/historical.py usa estes apontamentos pra achar o lag na
+# sigla do PREDECESSOR político, não na mesma string de sigla.
+#
+# Formato:
+#   "<SIGLA_ATUAL>":
+#     <ANO>: "<SIGLA_PREDECESSORA>"
+#
+# Os mapeamentos cobrem apenas casos onde houve TRANSFERÊNCIA DE BASE
+# (lideranças + apoio eleitoral). Fusões sem transferência clara ou casos
+# ambíguos ficam sem mapeamento (lag_share_1t_sucessao = NaN pra eles).
+#
+# DÉBITO TÉCNICO (#60): este dicionário substitui uma feature dinâmica de
+# intenção de voto via pesquisas eleitorais. Antes da versão final, trocar
+# por pesquisas agregadas (Datafolha/Ipec/Quaest) pra cobrir o caso geral.
+partido_sucessao:
+  PL:
+    2022: PSL     # Bolsonaro migrou PSL → PL em nov/2021; base acompanhou.
+  UNIÃO:
+    2022: DEM     # Fusão DEM + (resto do) PSL em abr/2022; sem Bolsonaro.
