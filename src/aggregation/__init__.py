@@ -1,0 +1,1 @@
+"""Agregação: município → UF → nacional."""

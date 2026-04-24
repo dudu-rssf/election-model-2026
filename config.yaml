@@ -1,0 +1,64 @@
+# ============================================================
+# Modelo Eleitoral 2026 — Configuração central
+# ------------------------------------------------------------
+# Todo parâmetro do pipeline vive aqui. Módulos importam de
+# src.config, nunca leem este YAML diretamente.
+# ============================================================
+
+# Modo de execução: dev (amostra reduzida) ou prod (pipeline completo)
+# ATENÇÃO: manter "dev" no Cowork. Trocar para "prod" apenas na máquina pesada.
+mode: dev
+
+# Semente global — fixa em todos os módulos (numpy, random, lgbm, pymc)
+seed: 42
+
+# ------------------------------------------------------------
+# Paths (relativos à raiz do projeto)
+# ------------------------------------------------------------
+paths:
+  data_raw: data/raw
+  data_interim: data/interim
+  data_processed: data/processed
+  models: models
+  reports: reports
+
+# ------------------------------------------------------------
+# Google Cloud — PREENCHER ANTES DE RODAR INGESTÃO
+# ------------------------------------------------------------
+gcp:
+  billing_project_id: "modelo-eleitoral-2026"
+
+# ------------------------------------------------------------
+# Modo dev — amostra reduzida para iteração rápida
+# ------------------------------------------------------------
+dev:
+  ufs: ["SP"]
+  anos_presidencial: [2014, 2018, 2022]
+  max_municipios: 100
+
+# ------------------------------------------------------------
+# Modo prod — pipeline completo (executa em outra máquina)
+# ------------------------------------------------------------
+prod:
+  ufs: "all"
+  anos_presidencial: [1998, 2002, 2006, 2010, 2014, 2018, 2022]
+  max_municipios: null
+
+# ------------------------------------------------------------
+# Modelo
+# ------------------------------------------------------------
+model:
+  lgbm:
+    n_estimators: 500
+    learning_rate: 0.05
+    num_leaves: 63
+    min_data_in_leaf: 20
+
+  # Parâmetros prod do bayesiano. Em modo dev, src.models.bayesian
+  # reduz drasticamente (chains=2, warmup=100, samples=100) só
+  # para checar que o amostrador inicia e termina sem erro.
+  bayesian:
+    chains: 4
+    warmup: 2000
+    samples: 2000
+    target_accept: 0.9

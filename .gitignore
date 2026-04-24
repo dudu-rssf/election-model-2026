@@ -1,0 +1,55 @@
+# Dados e modelos — NUNCA comitar.
+# Ignoramos SUBDIRs específicos para poder commitar data/.gitkeep e models/.gitkeep
+# (mantém a estrutura no repo). "models/" sem barra inicial incluiria src/models/ por
+# engano, então listamos só os paths de top-level aqui.
+/data/raw/
+/data/interim/
+/data/processed/
+/models/*
+!/models/.gitkeep
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Credenciais / env
+.env
+.env.*
+!.env.example
+
+# Service accounts e afins
+service-account*.json
+gcp-credentials*.json
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+
+# Artefatos de relatório (gerados, não comitados)
+reports/**/*.png
+reports/**/*.html
+reports/**/*.pdf
+!reports/.gitkeep
+
+# BigQuery / Google Cloud
+.gcloud/
+service-account*.json

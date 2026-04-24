@@ -1,0 +1,2 @@
+# Intencionalmente vazio. Artefatos do top-level models/ são gerados em execução
+# (LightGBM .pkl, InferenceData NetCDF, etc.) e ficam fora do repositório.

@@ -1,0 +1,41 @@
+# Versões-alvo para o projeto Modelo Eleitoral 2026.
+# Após `make install`, rodar `pip freeze > requirements.txt` na máquina-alvo
+# para travar as versões exatas (hashes de transitivas etc.).
+#
+# Python 3.11+ obrigatório.
+
+# --- Dados / Ingestão ---
+basedosdados==2.0.0b17
+pandas==2.2.3
+polars==1.17.1
+pyarrow==18.1.0
+numpy==1.26.4
+pyyaml==6.0.2
+
+# --- Científico / ML clássico ---
+scipy==1.14.1
+scikit-learn==1.5.2
+lightgbm==4.5.0
+optuna==4.1.0
+shap==0.46.0
+
+# --- Bayesiano ---
+pymc==5.19.1
+arviz==0.20.0
+pytensor==2.26.4
+
+# --- Geoespacial ---
+geopandas==1.0.1
+geobr==0.2.2
+folium==0.19.4
+shapely==2.0.6
+
+# --- Dashboard ---
+streamlit==1.41.1
+plotly==5.24.1
+
+# --- Desenvolvimento ---
+pytest==8.3.4
+ruff==0.8.4
+jupyter==1.1.1
+ipykernel==6.29.5
