@@ -309,9 +309,167 @@ def construir_painel_mestre(
     return painel
 
 
+# ============================================================
+# Fase 4.5 — painel municipal (target = prefeito)
+# ------------------------------------------------------------
+# O painel do MODELO PREFEITO é indexado por (id_municipio, ano_municipal),
+# análogo ao painel presidencial (mun × ano_presidencial). O conceito de
+# "prefeito vigente" na hora da eleição municipal X é o vencedor da eleição
+# municipal anterior, X-4:
+#
+#   ano_municipal 2016 -> prefeito vigente = vencedor em 2012
+#   ano_municipal 2020 -> vencedor em 2016
+#   ano_municipal 2024 -> vencedor em 2020
+#   ano_municipal 2028 -> vencedor em 2024
+#
+# Gap temporal: 4 anos (vs. 2 anos no presidencial).
+# ============================================================
+MUNICIPAL_TO_MUNICIPAL_ANTERIOR: dict[int, int] = {
+    # Histórico brasileiro pós-Constituição — eleições municipais a cada 4 anos.
+    2000: 1996,
+    2004: 2000,
+    2008: 2004,
+    2012: 2008,
+    2016: 2012,
+    2020: 2016,
+    2024: 2020,
+    2028: 2024,
+}
+
+
+def scaffold_municipio_ano_municipal(
+    diretorio: pd.DataFrame,
+    anos_municipais: Iterable[int],
+) -> pd.DataFrame:
+    """Produto cartesiano (municípios × anos municipais) com metadados do IBGE.
+
+    Para cada `ano_municipal` deriva `ano_eleicao_municipal_anterior = X - 4`
+    via `MUNICIPAL_TO_MUNICIPAL_ANTERIOR`. Levanta se algum ano não estiver
+    mapeado (eixo do modelo prefeito depende desse gap).
+    """
+    required = {"id_municipio", "sigla_uf", "nome"}
+    missing = required - set(diretorio.columns)
+    if missing:
+        raise ValueError(f"diretorio sem colunas: {sorted(missing)}")
+
+    d = diretorio.copy()
+    d["id_municipio"] = d["id_municipio"].astype("string")
+    d = d.drop_duplicates(subset=["id_municipio"])
+
+    anos = sorted({int(a) for a in anos_municipais})
+    if not anos:
+        raise ValueError("anos_municipais vazio")
+
+    d["_k"] = 1
+    a = pd.DataFrame({"ano_municipal": anos, "_k": 1})
+    out = d.merge(a, on="_k").drop(columns="_k")
+
+    out["ano_eleicao_municipal_anterior"] = out["ano_municipal"].map(
+        MUNICIPAL_TO_MUNICIPAL_ANTERIOR
+    )
+    if out["ano_eleicao_municipal_anterior"].isna().any():
+        anos_sem_map = sorted(
+            set(
+                out.loc[
+                    out["ano_eleicao_municipal_anterior"].isna(), "ano_municipal"
+                ].unique()
+            )
+        )
+        raise KeyError(
+            f"anos municipais sem mapping anterior: {anos_sem_map}. "
+            "Atualize MUNICIPAL_TO_MUNICIPAL_ANTERIOR em src.features.panel."
+        )
+    out["ano_eleicao_municipal_anterior"] = out[
+        "ano_eleicao_municipal_anterior"
+    ].astype("int64")
+
+    for col in ("regiao", "capital_uf", "id_municipio_tse"):
+        if col not in out.columns:
+            out[col] = pd.NA
+
+    cols = [
+        "id_municipio",
+        "sigla_uf",
+        "nome",
+        "regiao",
+        "capital_uf",
+        "ano_municipal",
+        "ano_eleicao_municipal_anterior",
+    ]
+    return out[cols].reset_index(drop=True)
+
+
+def construir_painel_mestre_municipal(
+    diretorio: pd.DataFrame,
+    df_prefeito: pd.DataFrame,
+    df_partidos_prefeito: pd.DataFrame | None = None,
+    anos_municipais: Iterable[int] | None = None,
+) -> pd.DataFrame:
+    """Painel mestre para o modelo prefeito: 1 linha por (mun, ano_municipal).
+
+    Anexa info do PREFEITO VIGENTE (vencedor da eleição municipal X-4) —
+    mesma semântica que o painel presidencial, só com gap diferente.
+
+    Args:
+        diretorio: IBGE municípios.
+        df_prefeito: resultados_candidato_municipio (cargo=prefeito, 1t).
+        df_partidos_prefeito: partidos_prefeito (pra coligação).
+        anos_municipais: default = MODE_CFG["anos_municipal"].
+
+    Returns:
+        DataFrame com id_municipio × ano_municipal e colunas mayor_*
+        (do prefeito VIGENTE à época, eleito em X-4).
+    """
+    anos = list(anos_municipais or MODE_CFG["anos_municipal"])
+
+    vencedores = prefeito_vencedor_por_eleicao(df_prefeito)
+    vencedores = anexar_coligacao_prefeito(vencedores, df_partidos_prefeito)
+
+    scaff = scaffold_municipio_ano_municipal(diretorio, anos)
+
+    painel = scaff.merge(
+        vencedores,
+        left_on=["ano_eleicao_municipal_anterior", "id_municipio"],
+        right_on=["ano_eleicao_municipal", "id_municipio"],
+        how="left",
+        suffixes=("", "_prefeito"),
+    )
+    # `ano_eleicao_municipal` veio do vencedor (= X-4). Mantemos o nome
+    # consistente do painel presidencial pra reuso de features.
+    if "ano_eleicao_municipal" in painel.columns:
+        # Se existirem ambas, mantém ano_eleicao_municipal como X-4.
+        pass
+
+    if "sigla_uf_prefeito" in painel.columns:
+        mismatches = (
+            (painel["sigla_uf_prefeito"].notna())
+            & (painel["sigla_uf"] != painel["sigla_uf_prefeito"])
+        ).sum()
+        if mismatches:
+            logger.warning(
+                "UF diretório ≠ UF prefeito em %d linha(s); mantendo UF do diretório",
+                int(mismatches),
+            )
+        painel = painel.drop(columns=["sigla_uf_prefeito"])
+
+    sem_prefeito = painel["mayor_numero"].isna().sum()
+    logger.info(
+        "painel_municipal: %d linhas (%d municípios × %d anos_municipal); %d sem prefeito anexado",
+        len(painel),
+        painel["id_municipio"].nunique(),
+        len(set(painel["ano_municipal"])),
+        int(sem_prefeito),
+    )
+    return painel
+
+
 __all__ = [
+    "PRESIDENCIAL_TO_MUNICIPAL",
+    "MUNICIPAL_TO_MUNICIPAL_ANTERIOR",
     "prefeito_vencedor_por_eleicao",
     "anexar_coligacao_prefeito",
     "scaffold_municipio_ano",
+    "scaffold_municipio_ano_municipal",
     "construir_painel_mestre",
+    "construir_painel_mestre_municipal",
 ]

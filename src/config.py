@@ -94,7 +94,8 @@ def summary() -> str:
     return (
         f"[config] mode={MODE} seed={SEED} "
         f"ufs={MODE_CFG.get('ufs')} "
-        f"anos={MODE_CFG.get('anos_presidencial')} "
+        f"anos_presidencial={MODE_CFG.get('anos_presidencial')} "
+        f"anos_municipal={MODE_CFG.get('anos_municipal')} "
         f"max_municipios={MODE_CFG.get('max_municipios')}"
     )
 

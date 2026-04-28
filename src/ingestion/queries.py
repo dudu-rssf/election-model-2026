@@ -129,10 +129,18 @@ def resultados_presidenciais_sql() -> str:
 
 
 def resultados_prefeito_sql() -> str:
-    """Resultados de prefeito (1º turno) por candidato e município."""
+    """Resultados de prefeito (1º turno) por candidato e município.
+
+    Usa diretamente `MODE_CFG["anos_municipal"]` (dev/prod no YAML). Isso
+    cobre as duas finalidades:
+      - Fase 3 (presidencial): lag do prefeito vigente em X-2 para features
+        de local_power. Os anos derivados de `anos_municipais_para_panel`
+        são sempre subconjunto de `anos_municipal`.
+      - Fase 4.5 (prefeito): anos de eleição municipal alvo (incluindo 2024,
+        que não precede nenhum ano presidencial coberto).
+    """
     uf = _uf_clause(MODE_CFG["ufs"], column="r.sigla_uf")
-    anos_mun = anos_municipais_para_panel(MODE_CFG["anos_presidencial"])
-    anos = _anos_clause(anos_mun, column="r.ano")
+    anos = _anos_clause(MODE_CFG["anos_municipal"], column="r.ano")
     return f"""
     SELECT
       r.ano,
@@ -173,10 +181,12 @@ def candidatos_presidenciais_sql() -> str:
 
 
 def candidatos_prefeito_sql() -> str:
-    """Ficha dos candidatos a prefeito (1º turno), com coligação estadual."""
+    """Ficha dos candidatos a prefeito (1º turno).
+
+    Ver `resultados_prefeito_sql` — anos cobertos = `MODE_CFG["anos_municipal"]`.
+    """
     uf = _uf_clause(MODE_CFG["ufs"], column="c.sigla_uf")
-    anos_mun = anos_municipais_para_panel(MODE_CFG["anos_presidencial"])
-    anos = _anos_clause(anos_mun, column="c.ano")
+    anos = _anos_clause(MODE_CFG["anos_municipal"], column="c.ano")
     return f"""
     SELECT
       c.ano,
@@ -297,11 +307,11 @@ def partidos_prefeito_sql() -> str:
     da coligação que o partido integrou na eleição majoritária local.
 
     Cobertura observada (peek): 100% em 2012 e 2016; 0% em 2020 (buraco
-    da BD). Plano B em backlog para 2020.
+    da BD). Plano B em backlog para 2020. Cobertura 2024 a confirmar via
+    scripts/01_ingest.py.
     """
     uf = _uf_clause(MODE_CFG["ufs"], column="p.sigla_uf")
-    anos_mun = anos_municipais_para_panel(MODE_CFG["anos_presidencial"])
-    anos = _anos_clause(anos_mun, column="p.ano")
+    anos = _anos_clause(MODE_CFG["anos_municipal"], column="p.ano")
     return f"""
     SELECT
       p.ano,

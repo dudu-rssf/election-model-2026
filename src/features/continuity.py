@@ -48,18 +48,28 @@ Entradas:
       100% NA por buraco da BD).
 
 Saída:
-    DataFrame (ano_presidencial × id_municipio) com 4 colunas de continuidade,
+    DataFrame (<ano_col> × id_municipio) com 4 colunas de continuidade,
     para ser broadcast no long durante a consolidação.
+
+Eixo configurável (`ano_col` + `map_ano_para_municipal`):
+  * Eixo presidencial (Fase 3, default):
+      ano_col='ano_presidencial', map=PRESIDENCIAL_TO_MUNICIPAL (X-2 — eleição
+      municipal mais recente cujo vencedor está vigente no ano presidencial).
+  * Eixo municipal (Fase 4.5):
+      ano_col='ano_municipal', map=MUNICIPAL_TO_MUNICIPAL_ANTERIOR (X-4 — o
+      prefeito vigente no momento da próxima eleição municipal foi eleito 4
+      anos antes).
 """
 from __future__ import annotations
 
 import logging
-from typing import Iterable
+from typing import Iterable, Mapping
 
 import numpy as np
 import pandas as pd
 
 from src.features.panel import (
+    MUNICIPAL_TO_MUNICIPAL_ANTERIOR,
     anexar_coligacao_prefeito,
     prefeito_vencedor_por_eleicao,
 )
@@ -220,17 +230,44 @@ def calcular_historico_continuidade(
 def features_continuity(
     df_prefeito: pd.DataFrame,
     df_partidos_prefeito: pd.DataFrame,
-    anos_presidenciais: Iterable[int],
+    anos_alvo: Iterable[int] | None = None,
+    *,
+    ano_col: str = "ano_presidencial",
+    map_ano_para_municipal: Mapping[int, int] | None = None,
+    anos_presidenciais: Iterable[int] | None = None,
 ) -> pd.DataFrame:
-    """Features de continuidade para cada (ano_presidencial × id_municipio).
+    """Features de continuidade para cada (<ano_col> × id_municipio).
 
-    Usa `PRESIDENCIAL_TO_MUNICIPAL` para pegar a eleição municipal vigente
-    e extrai as 4 colunas computadas em `calcular_historico_continuidade`.
+    Para cada ano-alvo, pega a eleição municipal vigente (via
+    `map_ano_para_municipal`) e extrai as 4 colunas computadas em
+    `calcular_historico_continuidade`.
+
+    Args:
+        df_prefeito: bruto TSE de prefeito.
+        df_partidos_prefeito: tabela de partidos (cargo='prefeito').
+        anos_alvo: anos do eixo (presidenciais ou municipais).
+        ano_col: nome da coluna do eixo temporal — default
+            `'ano_presidencial'` (Fase 3). Para Fase 4.5 usar
+            `'ano_municipal'`.
+        map_ano_para_municipal: dict ano_eixo→ano_eleicao_municipal_vigente.
+            Default: `PRESIDENCIAL_TO_MUNICIPAL` (X-2). Para Fase 4.5 passar
+            `MUNICIPAL_TO_MUNICIPAL_ANTERIOR` (X-4 — o prefeito vigente no
+            momento da próxima eleição municipal foi eleito 4 anos antes).
+        anos_presidenciais: alias deprecado de `anos_alvo`, mantido por
+            backward compat com chamadas pré-Fase 4.5.
     """
+    if anos_alvo is None and anos_presidenciais is not None:
+        anos_alvo = anos_presidenciais
+    if anos_alvo is None:
+        raise ValueError("anos_alvo é obrigatório (ou anos_presidenciais legacy)")
+
+    if map_ano_para_municipal is None:
+        map_ano_para_municipal = PRESIDENCIAL_TO_MUNICIPAL
+
     hist = calcular_historico_continuidade(df_prefeito, df_partidos_prefeito)
 
-    anos = sorted({int(a) for a in anos_presidenciais})
-    pares = [(a, PRESIDENCIAL_TO_MUNICIPAL[a]) for a in anos]
+    anos = sorted({int(a) for a in anos_alvo})
+    pares = [(a, map_ano_para_municipal[a]) for a in anos]
 
     linhas = []
     cols_keep = [
@@ -239,11 +276,11 @@ def features_continuity(
         "anos_consecutivos_mesmo_partido",
         "anos_consecutivos_mesmo_grupo",
     ]
-    for ano_pres, ano_mun in pares:
+    for ano_eixo, ano_mun in pares:
         sub = hist[hist["ano_eleicao_municipal"] == ano_mun][
             ["id_municipio", *cols_keep]
         ].copy()
-        sub.insert(0, "ano_presidencial", ano_pres)
+        sub.insert(0, ano_col, ano_eixo)
         linhas.append(sub)
     out = pd.concat(linhas, ignore_index=True) if linhas else pd.DataFrame()
 

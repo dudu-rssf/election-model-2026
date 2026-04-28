@@ -40,8 +40,9 @@ def test_anos_municipais_para_panel_mapeamento():
 def test_prefeito_usa_ano_municipal_nao_presidencial():
     sql = queries.resultados_prefeito_sql()
     assert "r.cargo = 'prefeito'" in sql
-    # Para anos presidenciais dev (2014,2018,2022), municipais esperados:
-    for ano_mun in [2012, 2016, 2020]:
+    # Usa MODE_CFG["anos_municipal"] direto; em dev = [2012,2016,2020,2024].
+    # 2024 é o ano municipal alvo da Fase 4.5 (não derivável de anos_presidencial).
+    for ano_mun in MODE_CFG["anos_municipal"]:
         assert str(ano_mun) in sql
     # E NÃO deve mencionar os anos presidenciais diretamente
     assert "IN (2014" not in sql

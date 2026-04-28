@@ -31,9 +31,16 @@ gcp:
 # ------------------------------------------------------------
 # Modo dev — amostra reduzida para iteração rápida
 # ------------------------------------------------------------
+# `anos_presidencial` — alvo da Fase 4 (presidencial) e fonte para
+# `anos_municipais_para_panel` (eleições municipais derivadas: X - 2).
+# `anos_municipal` — alvo da Fase 4.5 (modelo prefeito). NÃO é derivado de
+# anos_presidencial: pode incluir anos de eleição municipal que não
+# precedem nenhum ano presidencial coberto (ex: 2024, alvo de validação
+# mais recente).
 dev:
   ufs: ["SP"]
   anos_presidencial: [2014, 2018, 2022]
+  anos_municipal: [2012, 2016, 2020, 2024]
   max_municipios: 100
 
 # ------------------------------------------------------------
@@ -42,6 +49,7 @@ dev:
 prod:
   ufs: "all"
   anos_presidencial: [1998, 2002, 2006, 2010, 2014, 2018, 2022]
+  anos_municipal: [1996, 2000, 2004, 2008, 2012, 2016, 2020, 2024]
   max_municipios: null
 
 # ------------------------------------------------------------

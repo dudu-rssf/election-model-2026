@@ -1,34 +1,60 @@
 """
 src.features.vertical — alinhamento vertical (governador + base federal).
 
-Features por (ano_presidencial × id_municipio × sigla_partido):
+Features por (ano × id_municipio × sigla_partido):
 
-    alinhado_gov_vigente_partido    — 1 se partido == governador eleito em X-4.
+    alinhado_gov_vigente_partido    — 1 se partido == governador eleito na
+                                       eleição estadual anterior.
     alinhado_gov_vigente_coligacao  — 1 se partido está na coligação do gov vigente.
-    alinhado_gov_concorrente_partido
-    alinhado_gov_concorrente_coligacao
+    alinhado_gov_concorrente_partido    (apenas no eixo presidencial)
+    alinhado_gov_concorrente_coligacao  (apenas no eixo presidencial)
     share_dep_federal_partido       — fração dos votos de dep. federal do
-                                       partido no município (concorrente,
-                                       mesmo ano presidencial).
+                                       partido no município na eleição federal
+                                       relevante (concorrente no eixo presidencial,
+                                       anterior no eixo municipal).
 
-Governador é escolhido por UF × ano de eleição estadual. Dentro de uma UF
-tem um único governador vigente (dado pela eleição X-4) e um único
-governador concorrente (eleito em X). Broadcast para todos os municípios
-da UF.
+Eixo presidencial (Fase 3):
+  * Governador vigente em X = eleito em X-4 (map PRESIDENCIAL_TO_ESTADUAL_ANTERIOR).
+  * Governador concorrente em X = eleito em X (mesmo ano — eleição geral).
+  * Deputado federal concorrente em X = eleito em X.
 
-Deputado federal é votado nominalmente por município — agregamos por
-(ano × mun × partido) o share local da legenda.
+Eixo municipal (Fase 4.5):
+  * Governador vigente em ano_municipal X = eleito em X-2 (map MUNICIPAL_TO_ESTADUAL_ANTERIOR).
+  * NÃO há governador concorrente (municipal não é simultânea com estadual).
+  * Deputado federal vigente em ano_municipal X = eleito em X-2 (mesmo mapa).
+
+Broadcast: o governador é único por UF × ano da eleição — aplicado a
+todos os municípios daquela UF. Deputado federal é municipal (somamos votos
+por partido no município).
 """
 from __future__ import annotations
 
 import logging
-from typing import Iterable
+from typing import Iterable, Mapping
 
 import numpy as np
 import pandas as pd
 
 from src.features.local_power import _split_coligacao
 from src.ingestion.queries import PRESIDENCIAL_TO_ESTADUAL_ANTERIOR
+
+
+# ------------------------------------------------------------
+# Mapas do eixo municipal (Fase 4.5)
+# ------------------------------------------------------------
+# Eleição municipal X → eleição estadual/federal imediatamente anterior (X-2).
+# Governador/dep. federal eleitos em ano par de eleição geral, 2 anos antes
+# da municipal. Não existe concorrente no eixo municipal.
+MUNICIPAL_TO_ESTADUAL_ANTERIOR: dict[int, int] = {
+    2000: 1998,
+    2004: 2002,
+    2008: 2006,
+    2012: 2010,
+    2016: 2014,
+    2020: 2018,
+    2024: 2022,
+    2028: 2026,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -164,51 +190,67 @@ def alinhamento_partido_com_governador(
     df_governador: pd.DataFrame,
     df_partidos_gov: pd.DataFrame | None,
     partidos: Iterable[str],
+    *,
+    ano_col: str = "ano_presidencial",
+    map_vigente: Mapping[int, int] | None = None,
+    incluir_concorrente: bool = True,
 ) -> pd.DataFrame:
-    """Produz flags de alinhamento com governador VIGENTE e CONCORRENTE.
+    """Produz flags de alinhamento com governador vigente (e, opcionalmente,
+    concorrente — só faz sentido no eixo presidencial).
 
-    `df_partidos_gov`: ver `governador_vencedor_por_eleicao`.
+    Args:
+        painel: painel_mestre com [ano_col, id_municipio, sigla_uf].
+        df_governador: resultados_governador (votos por candidato × UF).
+        df_partidos_gov: partidos_governador (para coligação).
+        partidos: universo de siglas partidárias a considerar.
+        ano_col: nome da coluna de ano no painel.
+        map_vigente: {ano_eixo: ano_estadual_vigente}. Default =
+            PRESIDENCIAL_TO_ESTADUAL_ANTERIOR (eixo presidencial).
+            Para eixo municipal, passar MUNICIPAL_TO_ESTADUAL_ANTERIOR.
+        incluir_concorrente: se True (default, eixo presidencial), usa o
+            mesmo ano do eixo como ano concorrente (eleição geral). Se False
+            (eixo municipal), só gera features de governador vigente.
 
     Returns:
-        DataFrame (ano_presidencial × id_municipio × sigla_partido) com:
-            alinhado_gov_vigente_partido, alinhado_gov_vigente_coligacao,
-            alinhado_gov_concorrente_partido, alinhado_gov_concorrente_coligacao.
+        DataFrame (ano_col × id_municipio × sigla_partido) com flags.
     """
-    required_painel = {"ano_presidencial", "id_municipio", "sigla_uf"}
+    required_painel = {ano_col, "id_municipio", "sigla_uf"}
     missing = required_painel - set(painel.columns)
     if missing:
         raise ValueError(f"painel sem colunas: {sorted(missing)}")
 
+    map_vigente = dict(map_vigente or PRESIDENCIAL_TO_ESTADUAL_ANTERIOR)
+
     vencedores_gov = governador_vencedor_por_eleicao(df_governador, df_partidos_gov)
     partidos_list = sorted({str(p) for p in partidos if pd.notna(p)})
 
-    painel_base = painel[["ano_presidencial", "id_municipio", "sigla_uf"]].copy()
+    painel_base = painel[[ano_col, "id_municipio", "sigla_uf"]].copy()
     painel_base["id_municipio"] = painel_base["id_municipio"].astype("string")
-    painel_base["ano_eleicao_estadual_vigente"] = painel_base["ano_presidencial"].map(
-        PRESIDENCIAL_TO_ESTADUAL_ANTERIOR
-    )
-    painel_base["ano_eleicao_estadual_concorrente"] = painel_base["ano_presidencial"].astype("int64")
+    painel_base["ano_eleicao_estadual_vigente"] = painel_base[ano_col].map(map_vigente)
+    if incluir_concorrente:
+        painel_base["ano_eleicao_estadual_concorrente"] = painel_base[ano_col].astype("int64")
 
-    def _merge_gov(df, ano_col, prefix):
+    def _merge_gov(df, col, prefix):
         """Anexa governador por (ano, UF) usando a coluna indicada."""
         g = vencedores_gov.rename(
             columns={
-                "ano_eleicao_estadual": ano_col,
+                "ano_eleicao_estadual": col,
                 "gov_partido": f"{prefix}_partido_gov",
                 "gov_coligacao": f"{prefix}_coligacao_gov",
             }
-        )[[ano_col, "sigla_uf", f"{prefix}_partido_gov", f"{prefix}_coligacao_gov"]]
-        return df.merge(g, on=[ano_col, "sigla_uf"], how="left")
+        )[[col, "sigla_uf", f"{prefix}_partido_gov", f"{prefix}_coligacao_gov"]]
+        return df.merge(g, on=[col, "sigla_uf"], how="left")
 
     painel_base = _merge_gov(painel_base, "ano_eleicao_estadual_vigente", "vigente")
-    painel_base = _merge_gov(painel_base, "ano_eleicao_estadual_concorrente", "concorrente")
+    if incluir_concorrente:
+        painel_base = _merge_gov(painel_base, "ano_eleicao_estadual_concorrente", "concorrente")
 
-    # cross join × partidos
     painel_base["_k"] = 1
     partidos_df = pd.DataFrame({"sigla_partido": partidos_list, "_k": 1})
     out = painel_base.merge(partidos_df, on="_k").drop(columns="_k")
 
-    for prefix in ("vigente", "concorrente"):
+    prefixos = ["vigente"] + (["concorrente"] if incluir_concorrente else [])
+    for prefix in prefixos:
         part_gov = f"{prefix}_partido_gov"
         col_gov = f"{prefix}_coligacao_gov"
         na_mask = out[part_gov].isna()
@@ -223,11 +265,10 @@ def alinhamento_partido_com_governador(
         ]
         out[f"alinhado_gov_{prefix}_coligacao"] = out[f"alinhado_gov_{prefix}_coligacao"].astype("Int64")
 
-    cols = [
-        "ano_presidencial", "id_municipio", "sigla_partido",
-        "alinhado_gov_vigente_partido", "alinhado_gov_vigente_coligacao",
-        "alinhado_gov_concorrente_partido", "alinhado_gov_concorrente_coligacao",
-    ]
+    cols = [ano_col, "id_municipio", "sigla_partido",
+            "alinhado_gov_vigente_partido", "alinhado_gov_vigente_coligacao"]
+    if incluir_concorrente:
+        cols += ["alinhado_gov_concorrente_partido", "alinhado_gov_concorrente_coligacao"]
     return out[cols].reset_index(drop=True)
 
 
@@ -236,27 +277,53 @@ def alinhamento_partido_com_governador(
 # ------------------------------------------------------------
 def share_dep_federal_por_partido(
     df_dep_federal: pd.DataFrame,
-    anos_presidenciais: Iterable[int],
+    anos_alvo: Iterable[int] | None = None,
+    *,
+    ano_col: str = "ano_presidencial",
+    map_ano_para_federal: Mapping[int, int] | None = None,
+    # Alias de retrocompat (Fase 3)
+    anos_presidenciais: Iterable[int] | None = None,
 ) -> pd.DataFrame:
-    """Share dos votos de dep. federal por (ano × mun × partido).
+    """Share dos votos de dep. federal por (ano_eixo × mun × partido).
 
-    Usa o mesmo ano presidencial (eleição concorrente), que é quando o
-    eleitorado vota simultaneamente para presidente e deputados federais.
+    No eixo presidencial (default), o ano federal concorrente é o mesmo do
+    eixo (eleição geral). No eixo municipal, o ano federal é o ANTERIOR
+    (X-2, via `map_ano_para_federal`).
+
+    Args:
+        df_dep_federal: resultados de dep. federal (ano, id_municipio,
+            sigla_partido, votos).
+        anos_alvo: valores do eixo (ano_eixo) que queremos cobrir.
+            Alias: `anos_presidenciais` (deprecated, para compat com Fase 3).
+        ano_col: nome da coluna de ano na saída.
+        map_ano_para_federal: {ano_eixo: ano_federal}. Default = identidade
+            (ano_eixo == ano_federal, eixo presidencial). No eixo municipal,
+            passar `MUNICIPAL_TO_ESTADUAL_ANTERIOR` (dep. federal e governador
+            são eleitos juntos).
 
     Returns:
-        DataFrame com (ano_presidencial, id_municipio, sigla_partido, share_dep_federal_partido).
+        DataFrame com (<ano_col>, id_municipio, sigla_partido, share_dep_federal_partido).
     """
     required = {"ano", "id_municipio", "sigla_partido", "votos"}
     missing = required - set(df_dep_federal.columns)
     if missing:
         raise ValueError(f"df_dep_federal sem colunas: {sorted(missing)}")
 
-    anos_set = {int(a) for a in anos_presidenciais}
-    df = df_dep_federal[df_dep_federal["ano"].isin(anos_set)].copy()
+    if anos_alvo is None:
+        anos_alvo = anos_presidenciais  # backward compat
+    if anos_alvo is None:
+        raise ValueError("informe `anos_alvo` (lista de anos do eixo).")
+
+    anos_eixo = sorted({int(a) for a in anos_alvo})
+    mapa = {int(a): int(a) for a in anos_eixo}  # identity default
+    if map_ano_para_federal:
+        mapa.update({int(k): int(v) for k, v in map_ano_para_federal.items() if int(k) in mapa})
+
+    anos_fed_necessarios = sorted(set(mapa.values()))
+    df = df_dep_federal[df_dep_federal["ano"].isin(anos_fed_necessarios)].copy()
     df["id_municipio"] = df["id_municipio"].astype("string")
     df["votos"] = df["votos"].astype("int64")
 
-    # Soma por (ano, mun, partido) — múltiplos candidatos do partido
     por_partido = (
         df.groupby(["ano", "id_municipio", "sigla_partido"], as_index=False)["votos"]
         .sum()
@@ -266,14 +333,20 @@ def share_dep_federal_por_partido(
         .sum()
         .rename(columns={"votos": "_total"})
     )
-    out = por_partido.merge(totais, on=["ano", "id_municipio"], how="left")
-    out["share_dep_federal_partido"] = (out["votos"] / out["_total"]).astype("float64")
-    out = out.drop(columns=["votos", "_total"])
-    out = out.rename(columns={"ano": "ano_presidencial"})
-    return out[["ano_presidencial", "id_municipio", "sigla_partido", "share_dep_federal_partido"]].reset_index(drop=True)
+    agg = por_partido.merge(totais, on=["ano", "id_municipio"], how="left")
+    agg["share_dep_federal_partido"] = (agg["votos"] / agg["_total"]).astype("float64")
+    agg = agg.drop(columns=["votos", "_total"])
+    # `agg` está em coord federal (`ano` = ano federal). Faz broadcast reverso:
+    # para cada ano_eixo, pega a share do ano_federal mapeado.
+    remap = pd.DataFrame(
+        {ano_col: list(mapa.keys()), "ano": list(mapa.values())}
+    )
+    out = remap.merge(agg, on="ano", how="left").drop(columns=["ano"])
+    return out[[ano_col, "id_municipio", "sigla_partido", "share_dep_federal_partido"]].reset_index(drop=True)
 
 
 __all__ = [
+    "MUNICIPAL_TO_ESTADUAL_ANTERIOR",
     "governador_vencedor_por_eleicao",
     "alinhamento_partido_com_governador",
     "share_dep_federal_por_partido",

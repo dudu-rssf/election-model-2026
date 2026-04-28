@@ -129,6 +129,24 @@ def aplicar_sucessao(
                     "partido_sucessao: %s %d → %s (%d linhas)",
                     sigla, ano, predecessor, n,
                 )
+                # Sucessão silenciosa: quando o predecessor declarado não aparece
+                # como sigla_partido em nenhum ano anterior do DataFrame, o lookup
+                # de histórico (e.g. _lag_por_sigla_canonica em historical.py) vai
+                # retornar NaN — a sucessão fica formalmente aplicada mas sem
+                # efeito prático. Bug típico: predecessor que só existe em outro
+                # eixo eleitoral (e.g. UNIÃO 2022 → DEM, mas DEM não teve
+                # candidato presidencial). Avisar no log torna o caso audível.
+                tem_historico = bool(
+                    ((partido_arr == predecessor) & (ano_arr < ano)).any()
+                )
+                if not tem_historico:
+                    logger.warning(
+                        "partido_sucessao: %s %d → %s aplicado em %d linhas, "
+                        "mas %r não aparece como sigla_partido em nenhum ano "
+                        "< %d no DataFrame. Lag canônico ficará NaN — "
+                        "predecessor pode existir só em outro eixo eleitoral.",
+                        sigla, ano, predecessor, n, predecessor, ano,
+                    )
     logger.info("aplicar_sucessao: %d linhas remapeadas", n_aplicados)
     out[col_saida] = canonica
     return out

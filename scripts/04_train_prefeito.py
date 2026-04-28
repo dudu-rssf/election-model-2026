@@ -1,24 +1,20 @@
 #!/usr/bin/env python
 """
-scripts/04_train.py — Fase 4: primeiro modelo presidencial.
+scripts/04_train_prefeito.py — Fase 4.5: primeiro modelo de prefeito.
 
-Carrega `data/processed/features.parquet`, roda split temporal
-(treino=2014+2018, teste=2022), ajusta baselines (B0/B1/B2) e LightGBM,
-salva predições em `data/processed/preds.parquet`, o modelo em
-`models/lgbm_v1.pkl` e gera `reports/status_fase_4.md`.
+Análogo ao scripts/04_train.py, mas no eixo `ano_municipal`.
 
-Flags opt-in (replicadas do `04_train_prefeito.py`):
+Carrega `data/processed/features_prefeito.parquet`, roda split temporal
+(treino = anos_municipal[:-1], teste = último ano), ajusta baselines (B0/B1/B2)
+e LightGBM, salva predições em `data/processed/preds_prefeito.parquet`,
+o modelo em `models/lgbm_prefeito_v1.pkl` e gera
+`reports/status_fase_4_5.md`.
 
-  * `--calibrate` ajusta IsotonicCalibrator pós-hoc (corrige saturação no
-    top decil). Default `--calib-mode holdout` separa um ano de calibração.
-  * `--conformal` ajusta SplitConformal sobre os resíduos do conjunto de
-    calibração e adiciona pred_lower/pred_upper. `--conformal-mondrian`
-    também salva versão estratificada por bin de pred.
+Em dev: anos_municipal = [2012, 2016, 2020, 2024] → treino=[2012,2016,2020],
+teste=2024.
 
 Uso:
-    python scripts/04_train.py [--log-level INFO] [--no-save-model]
-    python scripts/04_train.py --calibrate --calib-min-pred 0.5
-    python scripts/04_train.py --calibrate --conformal --conformal-mondrian
+    python scripts/04_train_prefeito.py [--log-level INFO] [--no-save-model]
 """
 from __future__ import annotations
 
@@ -41,27 +37,24 @@ from src.models import baseline as bl  # noqa: E402
 from src.models import calibrate as cal  # noqa: E402
 from src.models import conformal as cf  # noqa: E402
 from src.models import evaluate as ev  # noqa: E402
-from src.models import features as mf  # noqa: E402
+from src.models import features_prefeito as mf  # noqa: E402
 from src.models import train as tr  # noqa: E402
 
 
-log = logging.getLogger("04_train")
-
-ANO_COL_PRES = "ano_presidencial"
+log = logging.getLogger("04_train_prefeito")
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Fase 4 — treino e avaliação")
+    p = argparse.ArgumentParser(description="Fase 4.5 — treino e avaliação (prefeito)")
     p.add_argument("--log-level", type=str, default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     p.add_argument("--no-save-model", action="store_true",
-                   help="não escreve models/lgbm_v1.pkl")
+                   help="não escreve models/lgbm_prefeito_v1.pkl")
     p.add_argument("--val-fraction", type=float, default=0.0,
-                   help="fração do treino pra validação interna (early stopping). "
-                        "0 desliga. Padrão: 0.")
+                   help="fração do treino pra validação interna (early stopping). 0 desliga.")
     p.add_argument("--calibrate", action="store_true",
                    help="ajusta IsotonicCalibrator e adiciona pred calibrada "
-                        "(LightGBM_v1_iso) ao comparativo.")
+                        "(LightGBM_prefeito_v1_iso) ao comparativo.")
     p.add_argument("--calib-mode", type=str, default="holdout",
                    choices=["holdout", "oof"],
                    help="estratégia pra gerar predições no treino: "
@@ -95,14 +88,14 @@ def configurar_logging(level: str) -> None:
     )
 
 
-def determinar_split(anos_pres: list[int]) -> tuple[list[int], int]:
+def determinar_split(anos_municipal: list[int]) -> tuple[list[int], int]:
     """Treino = todos menos o último; teste = último.
 
-    Em dev (2014, 2018, 2022) -> treino=[2014,2018], teste=2022.
+    Em dev (2012, 2016, 2020, 2024) -> treino=[2012,2016,2020], teste=2024.
     """
-    anos = sorted(int(a) for a in anos_pres)
+    anos = sorted(int(a) for a in anos_municipal)
     if len(anos) < 2:
-        raise ValueError(f"precisa de ≥ 2 anos presidenciais; got {anos}")
+        raise ValueError(f"precisa de ≥ 2 anos municipais; got {anos}")
     return anos[:-1], anos[-1]
 
 
@@ -126,7 +119,6 @@ def rodar_baselines(
 
 
 def formatar_tabela_md(df: pd.DataFrame, floatfmt: str = ".4f") -> str:
-    """Converte DataFrame em tabela Markdown (sem dependências extras)."""
     if len(df) == 0:
         return "_(vazio)_"
     cols = list(df.columns)
@@ -171,14 +163,14 @@ def gerar_relatorio(
     cobertura_decil_mondrian: pd.DataFrame | None = None,
     mondrian_q_per_bin: list[float] | None = None,
 ) -> str:
-    """Monta o markdown do status_fase_4.md."""
+    """Monta o markdown do status_fase_4_5.md."""
     linhas = [
-        "# Fase 4 — status: primeiro modelo presidencial",
+        "# Fase 4.5 — status: primeiro modelo de prefeito",
         "",
         f"**Modo:** dev | **UFs:** {MODE_CFG['ufs']} | "
         f"**Máx municípios:** {MODE_CFG['max_municipios']}",
-        f"**Split temporal:** treino = {anos_treino} ({n_train} linhas) | "
-        f"teste = {ano_teste} ({n_test} linhas)",
+        f"**Eixo:** `ano_municipal` | **Split temporal:** treino = {anos_treino} "
+        f"({n_train} linhas) | teste = {ano_teste} ({n_test} linhas)",
         "",
         "## Comparativo geral (escala share ∈ [0,1])",
         "",
@@ -281,32 +273,30 @@ def gerar_relatorio(
         "",
         "- Target modelado em `logit(share)`, predição destransformada com sigmoid.",
         "- LightGBM com `objective=regression_l1` (MAE) — robusto a caudas.",
-        "- Features categóricas (sigla_uf, regiao, porte, continuidade_classe, sigla_partido) "
-        "tratadas nativamente pelo LightGBM.",
-        "- Amostra dev = 1 UF × 100 municípios × 3 anos × ~10 partidos = ~3 mil linhas. "
-        "Signal-to-noise é limitado — resultados aqui servem pra validar pipeline, não pra "
-        "conclusões sobre 2026.",
+        "- Eixo `ano_municipal`: prefeito vigente no momento da próxima eleição = "
+        "vencedor da eleição municipal anterior (X-4).",
+        "- Sem features de governador concorrente (não há eleição estadual no ano "
+        "municipal); apenas `alinhado_gov_vigente_*`.",
+        "- Universo de partidos no painel municipal é maior (especialmente em "
+        "eleições proporcionais locais), e a granularidade do `numero_candidato` "
+        "é local — diferente do número nacional do candidato presidencial.",
     ]
     if calib_iso is not None:
         linhas += [
             "- Versão `_iso` corrige saturação no top decil via regressão isotônica "
-            "treinada num ano holdout do conjunto de treino. Não toca o LGBM.",
-        ]
-    if cobertura_split is not None:
-        linhas += [
-            "- Cobertura conformal é uma propriedade do conjunto de calibração: o "
-            "número observado no test é descritivo, não uma garantia (a garantia "
-            "vale sob exchangeability calib↔test).",
+            "treinada com predições out-of-fold (leave-one-year-out) no conjunto "
+            "de treino. Não toca o LGBM.",
         ]
     linhas += [
         "",
         "## Próximos passos",
         "",
-        "- **Fase 5+**: revisar incerteza com mais anos em prod, e considerar "
-        "conformal por estratos de UF/região (não só por bin de pred).",
-        "- **Investigar**: se o LightGBM não bate B1 (`lag_share_1t`) de forma contundente, "
-        "reavaliar features históricas — pode ser que precisemos de mais anos no treino "
-        "(rodar em prod).",
+        "- Replicar `--calibrate` no eixo presidencial (`scripts/04_train.py`).",
+        "- Investigar comparativo com Fase 4: o lag local (`lag_share_1t`) é mais "
+        "ruidoso aqui — partidos lançam candidatos diferentes em cada eleição "
+        "municipal — por isso B1 deve performar pior que no presidencial.",
+        "- Avaliar uso da feature `continuidade` como driver: por hipótese, é "
+        "ainda mais predictive aqui que no presidencial.",
     ]
     return "\n".join(linhas)
 
@@ -317,13 +307,13 @@ def main() -> int:
     set_global_seed()
     log.info(summary())
 
-    # 1) Carrega features
-    df = fio.load_processed("features")
-    log.info("features: %s", df.shape)
+    # 1) Carrega features (eixo municipal)
+    df = fio.load_processed("features_prefeito")
+    log.info("features_prefeito: %s", df.shape)
 
     # 2) Prep
     prep = mf.preparar_X_y(df)
-    anos = MODE_CFG["anos_presidencial"]
+    anos = MODE_CFG["anos_municipal"]
     anos_treino, ano_teste = determinar_split(anos)
     train, test = mf.split_temporal(prep, anos_treino, ano_teste)
 
@@ -334,14 +324,13 @@ def main() -> int:
     # 4) LightGBM
     log.info("treinando LightGBM...")
     model, y_pred_lgbm = tr.fit_predict(train, test, val_fraction=args.val_fraction)
-    preds["LightGBM_v1"] = y_pred_lgbm
+    preds["LightGBM_prefeito_v1"] = y_pred_lgbm
 
     # 4.5) Calibração isotônica (opt-in)
     calibrator: cal.IsotonicCalibrator | None = None
     y_pred_iso: np.ndarray | None = None
     calib_iso: pd.DataFrame | None = None
     por_partido_iso: pd.DataFrame | None = None
-    df_calib: pd.DataFrame | None = None
     if args.calibrate:
         # min_pred=0 vira None internamente (= calibra todos)
         min_pred = args.calib_min_pred if args.calib_min_pred > 0 else None
@@ -351,17 +340,17 @@ def main() -> int:
                      ano_calib, min_pred)
             calibrator, df_calib = cal.treinar_calibrador_holdout(
                 train, ano_calib=ano_calib, anos_treino=anos_treino,
-                ano_col=ANO_COL_PRES, min_pred=min_pred,
+                ano_col=mf.ANO_COL, min_pred=min_pred,
             )
         else:  # oof
             log.info("calibração isotônica via OOF leave-one-year-out "
                      "(n_folds=%d, min_pred=%s)...",
                      len(anos_treino), min_pred)
             calibrator, df_calib = cal.treinar_calibrador_oof(
-                train, anos_treino, ano_col=ANO_COL_PRES, min_pred=min_pred,
+                train, anos_treino, ano_col=mf.ANO_COL, min_pred=min_pred,
             )
         y_pred_iso = calibrator.predict(y_pred_lgbm)
-        preds["LightGBM_v1_iso"] = y_pred_iso
+        preds["LightGBM_prefeito_v1_iso"] = y_pred_iso
         log.info(
             "isotonic: pred raw range=[%.4f, %.4f] -> iso range=[%.4f, %.4f]",
             float(np.min(y_pred_lgbm)), float(np.max(y_pred_lgbm)),
@@ -389,23 +378,28 @@ def main() -> int:
         # Caso contrário, gerar um holdout dedicado com a mesma estratégia.
         if args.calibrate:
             log.info("conformal: reusando conjunto de calibração do --calibrate")
+            # Coluna de pred no df_calib varia por modo (holdout vs oof)
             col_pred_calib = (
                 "y_pred_holdout" if args.calib_mode == "holdout" else "y_pred_oof"
             )
             pred_calib_raw = df_calib[col_pred_calib].to_numpy()
             y_true_calib = df_calib["y_true"].to_numpy()
+            # Se calibrator está ativo, resíduos vão sobre o pipeline final
+            # (raw -> isotonic). Caso contrário, sobre raw.
             pred_calib_final = (
                 calibrator.predict(pred_calib_raw) if calibrator is not None
                 else pred_calib_raw
             )
         else:
+            # Sem --calibrate: gera holdout só pro conformal. Usa --calib-ano
+            # ou último ano de treino.
             ano_calib_cf = (
                 args.calib_ano if args.calib_ano is not None else anos_treino[-1]
             )
             log.info("conformal: gerando holdout dedicado (ano_calib=%d)", ano_calib_cf)
             df_calib = cal.holdout_predictions_um_ano(
                 train, ano_calib=ano_calib_cf, anos_treino=anos_treino,
-                ano_col=ANO_COL_PRES,
+                ano_col=mf.ANO_COL,
             )
             pred_calib_final = df_calib["y_pred_holdout"].to_numpy()
             y_true_calib = df_calib["y_true"].to_numpy()
@@ -488,11 +482,11 @@ def main() -> int:
     if pred_lo_mondrian is not None:
         preds_df["pred_lower_mondrian"] = pred_lo_mondrian
         preds_df["pred_upper_mondrian"] = pred_hi_mondrian
-    fio.save_processed(preds_df, "preds")
+    fio.save_processed(preds_df, "preds_prefeito")
 
     if not args.no_save_model:
         PATHS["models"].mkdir(parents=True, exist_ok=True)
-        model_path = PATHS["models"] / "lgbm_v1.pkl"
+        model_path = PATHS["models"] / "lgbm_prefeito_v1.pkl"
         with open(model_path, "wb") as f:
             pickle.dump({
                 "model": model,
@@ -501,9 +495,9 @@ def main() -> int:
                 "params": tr.params_lgbm(),
                 "anos_treino": anos_treino,
                 "ano_teste": ano_teste,
-                "ano_col": ANO_COL_PRES,
-                "calibrator": calibrator,            # None se --calibrate não foi passado
-                "split_conformal": split_conf,       # None se --conformal não foi passado
+                "ano_col": mf.ANO_COL,
+                "calibrator": calibrator,           # None se --calibrate não foi passado
+                "split_conformal": split_conf,      # None se --conformal não foi passado
                 "mondrian_conformal": mondrian_conf,  # None se --conformal-mondrian não foi passado
             }, f)
         log.info("modelo salvo em %s", model_path)
@@ -532,11 +526,11 @@ def main() -> int:
             mondrian_conf.q_per_bin.tolist() if mondrian_conf is not None else None
         ),
     )
-    report_path = PATHS["reports"] / "status_fase_4.md"
+    report_path = PATHS["reports"] / "status_fase_4_5.md"
     report_path.write_text(md, encoding="utf-8")
     log.info("relatório salvo em %s", report_path)
 
-    log.info("Fase 4 OK.")
+    log.info("Fase 4.5 OK.")
     return 0
 
 
