@@ -80,6 +80,45 @@ def rodar_queries(force: bool, only: str | None) -> dict:
     return frames
 
 
+# Tabelas e colunas-chave que NÃO podem ter null pro modelo. Nulls aqui são
+# resíduos do BD em anos antigos: id_municipio null = voto de zona eleitoral
+# sem município brasileiro (exterior, trânsito); numero_candidato null =
+# registro de candidatura inválido. Drop é semanticamente correto.
+# partidos_governador é exceção: id_municipio é null por design (cargo estadual).
+_CHAVES_OBRIGATORIAS: dict[str, tuple[str, ...]] = {
+    "resultados_presidenciais": ("id_municipio",),
+    "resultados_prefeito": ("id_municipio",),
+    "resultados_governador": ("id_municipio",),
+    "resultados_deputado_federal": ("id_municipio",),
+    "partidos_prefeito": ("id_municipio",),
+    "diretorio_municipios": ("id_municipio",),
+    "candidatos_deputado_federal": ("numero_candidato",),
+}
+
+
+def limpar_chaves_nulls(frames: dict) -> dict:
+    """Drop linhas com chave null nas tabelas registradas em `_CHAVES_OBRIGATORIAS`.
+
+    Logamos quantas linhas dropamos por (tabela, coluna).
+    """
+    for name, cols in _CHAVES_OBRIGATORIAS.items():
+        df = frames.get(name)
+        if df is None:
+            continue
+        for col in cols:
+            if col not in df.columns:
+                continue
+            n_null = int(df[col].isna().sum())
+            if n_null > 0:
+                log.warning(
+                    "  %s: dropando %d/%d linhas com %s null (%.2f%%)",
+                    name, n_null, len(df), col, 100 * n_null / len(df),
+                )
+                df = df[df[col].notna()].copy()
+                frames[name] = df
+    return frames
+
+
 def validar(frames: dict) -> validate.ValidationReport:
     report = validate.ValidationReport()
     if "resultados_presidenciais" in frames:
@@ -145,6 +184,8 @@ def main() -> int:
             frames["geometrias"] = geo.download_geometrias(force=args.force)
         except Exception as e:  # geobr costuma ter glitches de rede
             log.warning("geometrias falharam (%s) — siga adiante, Fase 6 tentará de novo", e)
+
+    frames = limpar_chaves_nulls(frames)
 
     report = validar(frames)
     escrever_relatorio(report)

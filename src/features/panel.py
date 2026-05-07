@@ -375,10 +375,26 @@ def scaffold_municipio_ano_municipal(
                 ].unique()
             )
         )
-        raise KeyError(
-            f"anos municipais sem mapping anterior: {anos_sem_map}. "
-            "Atualize MUNICIPAL_TO_MUNICIPAL_ANTERIOR em src.features.panel."
-        )
+        # Anos antes do primeiro ano mapeado (ex: 1996) não têm eleição
+        # municipal anterior nos dados — sem prefeito vigente pra anexar,
+        # eles caem fora do painel modelado. Mantidos só em prefeito_long
+        # como base histórica para lag dos anos seguintes.
+        anos_min = min(MUNICIPAL_TO_MUNICIPAL_ANTERIOR.keys())
+        anos_anteriores = [a for a in anos_sem_map if a < anos_min]
+        anos_desconhecidos = [a for a in anos_sem_map if a >= anos_min]
+        if anos_desconhecidos:
+            raise KeyError(
+                f"anos municipais sem mapping anterior: {anos_desconhecidos}. "
+                "Atualize MUNICIPAL_TO_MUNICIPAL_ANTERIOR em src.features.panel."
+            )
+        if anos_anteriores:
+            logger.warning(
+                "scaffold_municipio_ano_municipal: anos %s não têm eleição "
+                "municipal anterior mapeada — removidos do painel modelado "
+                "(serão usados só como histórico para lag).",
+                anos_anteriores,
+            )
+            out = out[out["ano_eleicao_municipal_anterior"].notna()].copy()
     out["ano_eleicao_municipal_anterior"] = out[
         "ano_eleicao_municipal_anterior"
     ].astype("int64")

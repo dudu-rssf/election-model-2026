@@ -193,12 +193,20 @@ class MondrianConformal:
         alpha: nível de erro alvo.
         n_bins: número de bins por quantil de pred (default 10 = decis).
         min_per_bin: bins menores que isso fallback pro global.
+        min_q_factor: floor mínimo no q̂ por bin como fração do q̂ global
+            (default 0.0 = sem floor, comportamento original). Em prod com
+            n grande e bins de pred baixa, a distribuição de resíduos no
+            bin pode degenerar (delta em zero) e o quantil 90% também
+            colapsar pra zero — o intervalo zerado não cobre as caudas.
+            Setando 0.3 ou 0.5 garante que `q_per_bin >= min_q_factor *
+            q_global` em todos os bins. Recomendado: 0.5 em prod.
 
     Attrs:
         bin_edges: ndarray (n_bins+1,) com as bordas (após fit).
         q_per_bin: ndarray (n_bins,) com o q̂ de cada bin.
         q_global: float — fallback para bins com pouco dado.
         bins_fallback: lista de índices que caíram no global.
+        bins_floored: lista de índices que receberam floor min_q_factor.
     """
 
     nome: str = "mondrian_conformal"
@@ -208,6 +216,7 @@ class MondrianConformal:
         alpha: float = 0.1,
         n_bins: int = 10,
         min_per_bin: int = 10,
+        min_q_factor: float = 0.0,
     ) -> None:
         if not 0 < alpha < 1:
             raise ValueError(f"alpha fora de (0,1): {alpha}")
@@ -215,13 +224,17 @@ class MondrianConformal:
             raise ValueError(f"n_bins>=2 (got {n_bins})")
         if min_per_bin < 1:
             raise ValueError(f"min_per_bin>=1 (got {min_per_bin})")
+        if not 0.0 <= min_q_factor <= 1.0:
+            raise ValueError(f"min_q_factor em [0,1] (got {min_q_factor})")
         self.alpha = float(alpha)
         self.n_bins = int(n_bins)
         self.min_per_bin = int(min_per_bin)
+        self.min_q_factor = float(min_q_factor)
         self.bin_edges: np.ndarray | None = None
         self.q_per_bin: np.ndarray | None = None
         self.q_global: float | None = None
         self.bins_fallback: list[int] = []
+        self.bins_floored: list[int] = []
         self.n_calib: int = 0
 
     def fit(
@@ -286,14 +299,32 @@ class MondrianConformal:
                 )
             else:
                 q_per_bin[b] = _quantile_residuos(r_b, self.alpha)
+
+        # Floor: bins com q̂ degenerado (~0) recebem ao menos
+        # min_q_factor * q_global pra evitar intervalos zerados.
+        bins_floored: list[int] = []
+        if self.min_q_factor > 0.0:
+            floor = self.min_q_factor * q_global
+            for b in range(n_bins_eff):
+                if q_per_bin[b] < floor:
+                    logger.info(
+                        "MondrianConformal: bin %d q=%.4f < floor=%.4f "
+                        "(min_q_factor=%.2f * q_global=%.4f) -> ajustado",
+                        b, q_per_bin[b], floor, self.min_q_factor, q_global,
+                    )
+                    q_per_bin[b] = floor
+                    bins_floored.append(b)
+
         self.q_per_bin = q_per_bin
         self.bins_fallback = bins_fallback
+        self.bins_floored = bins_floored
         self.n_calib = int(n)
         logger.info(
             "MondrianConformal.fit: n=%d, alpha=%.3f, n_bins_eff=%d, "
-            "q_global=%.4f, q_per_bin=[%s]",
+            "q_global=%.4f, q_per_bin=[%s], min_q_factor=%.2f, n_floored=%d",
             n, self.alpha, n_bins_eff, q_global,
             ", ".join(f"{q:.3f}" for q in q_per_bin),
+            self.min_q_factor, len(bins_floored),
         )
         return self
 

@@ -35,11 +35,12 @@ if str(ROOT) not in sys.path:
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from src.config import MODE_CFG, PATHS, set_global_seed, summary  # noqa: E402
+from src.config import MODE, MODE_CFG, PATHS, set_global_seed, summary  # noqa: E402
 from src.features import io as fio  # noqa: E402
 from src.models import baseline as bl  # noqa: E402
 from src.models import calibrate as cal  # noqa: E402
 from src.models import conformal as cf  # noqa: E402
+from src.models import cqr as cqr_mod  # noqa: E402
 from src.models import evaluate as ev  # noqa: E402
 from src.models import features as mf  # noqa: E402
 from src.models import train as tr  # noqa: E402
@@ -85,6 +86,18 @@ def parse_args() -> argparse.Namespace:
                         "de pred). Salva pred_lower_mondrian/pred_upper_mondrian.")
     p.add_argument("--conformal-bins", type=int, default=10,
                    help="n_bins do MondrianConformal. Default 10 (decis).")
+    p.add_argument("--conformal-min-q-factor", type=float, default=0.0,
+                   help="floor mínimo no q̂ por bin do Mondrian, como fração "
+                        "do q̂ global. 0 (default) = sem floor. Em prod com "
+                        "muitos pontos de pred baixa, recomenda-se 0.5 pra "
+                        "evitar intervalos zerados em bins degenerados.")
+    p.add_argument("--cqr", action="store_true",
+                   help="também ajusta CQR (Conformalized Quantile Regression). "
+                        "Treina 2 LGBMs quantile (low, hi) com mesmo split e "
+                        "calibra a margem conformal. Salva pred_lower_cqr/"
+                        "pred_upper_cqr — intervalos adaptativos que herdam "
+                        "heterocedasticidade do modelo quantile. Pressupõe "
+                        "--conformal (reusa o mesmo conjunto de calibração).")
     return p.parse_args()
 
 
@@ -170,12 +183,15 @@ def gerar_relatorio(
     cobertura_mondrian: float | None = None,
     cobertura_decil_mondrian: pd.DataFrame | None = None,
     mondrian_q_per_bin: list[float] | None = None,
+    cobertura_cqr: float | None = None,
+    cobertura_decil_cqr: pd.DataFrame | None = None,
+    q_hat_cqr: float | None = None,
 ) -> str:
     """Monta o markdown do status_fase_4.md."""
     linhas = [
         "# Fase 4 — status: primeiro modelo presidencial",
         "",
-        f"**Modo:** dev | **UFs:** {MODE_CFG['ufs']} | "
+        f"**Modo:** {MODE} | **UFs:** {MODE_CFG['ufs']} | "
         f"**Máx municípios:** {MODE_CFG['max_municipios']}",
         f"**Split temporal:** treino = {anos_treino} ({n_train} linhas) | "
         f"teste = {ano_teste} ({n_test} linhas)",
@@ -269,6 +285,28 @@ def gerar_relatorio(
                     "",
                     "> Mondrian deve dar cobertura aproximadamente uniforme "
                     "ao longo dos decis (cobertura condicional).",
+                    "",
+                ]
+        if cobertura_cqr is not None:
+            qhat_label = (
+                f"{q_hat_cqr:+.4f}" if q_hat_cqr is not None else "n/a"
+            )
+            linhas += [
+                "## Cobertura conformal (CQR — Conformalized Quantile Regression)",
+                "",
+                f"**Cobertura observada (test):** {cobertura_cqr:.3f} | "
+                f"**q̂ CQR:** {qhat_label}",
+                "",
+                "> CQR usa 2 LGBMs quantile pra modelar `[q_low(x), q_hi(x)]` "
+                "diretamente, depois conformaliza a margem. Intervalos "
+                "adaptativos: largura cresce onde o modelo prevê dispersão maior.",
+                "",
+            ]
+            if cobertura_decil_cqr is not None:
+                linhas += [
+                    "**Cobertura por decil de pred — CQR:**",
+                    "",
+                    formatar_tabela_md(cobertura_decil_cqr),
                     "",
                 ]
 
@@ -434,12 +472,13 @@ def main() -> int:
 
         # Mondrian conformal — opcional
         if args.conformal_mondrian:
-            log.info("conformal: ajustando MondrianConformal (n_bins=%d)",
-                     args.conformal_bins)
+            log.info("conformal: ajustando MondrianConformal (n_bins=%d, min_q_factor=%.2f)",
+                     args.conformal_bins, args.conformal_min_q_factor)
             mondrian_conf = cf.MondrianConformal(
                 alpha=args.conformal_alpha,
                 n_bins=args.conformal_bins,
                 min_per_bin=10,
+                min_q_factor=args.conformal_min_q_factor,
             ).fit(pred_calib_final, residuos_abs)
             pred_lo_mondrian, pred_hi_mondrian = mondrian_conf.predict_interval(
                 y_pred_pontual,
@@ -455,6 +494,87 @@ def main() -> int:
                 test.y.values, y_pred_pontual, pred_lo_mondrian, pred_hi_mondrian,
                 n_quantis=10,
             )
+
+    # 4.7) CQR — Conformalized Quantile Regression (opt-in)
+    cqr_obj: cqr_mod.CQR | None = None
+    pred_lo_cqr: np.ndarray | None = None
+    pred_hi_cqr: np.ndarray | None = None
+    cobertura_cqr: float | None = None
+    cobertura_decil_cqr: pd.DataFrame | None = None
+    if args.cqr:
+        if not args.conformal:
+            raise SystemExit("--cqr requer --conformal (reusa o conjunto de calibração)")
+
+        from src.models.transforms import sigmoid_logit  # local import: opt-in
+
+        alpha_cqr = args.conformal_alpha
+        a_low = alpha_cqr / 2.0
+        a_hi = 1.0 - alpha_cqr / 2.0
+
+        # Treina os 2 LGBMs quantile FINAIS (em todo o treino) — gerarão
+        # os intervalos no test.
+        log.info("CQR: treinando LGBMs quantile finais (alpha_low=%.3f, alpha_hi=%.3f)",
+                 a_low, a_hi)
+        m_low_final = tr.treinar_lgbm(
+            train.X, train.y, train.cat_features,
+            overrides={"objective": "quantile", "alpha": a_low, "metric": "quantile"},
+            early_stopping_rounds=None,
+        )
+        m_hi_final = tr.treinar_lgbm(
+            train.X, train.y, train.cat_features,
+            overrides={"objective": "quantile", "alpha": a_hi, "metric": "quantile"},
+            early_stopping_rounds=None,
+        )
+        q_low_test = sigmoid_logit(m_low_final.predict(test.X))
+        q_hi_test = sigmoid_logit(m_hi_final.predict(test.X))
+        # Modelos quantile podem cruzar (low > hi pontualmente) — garantir ordem.
+        q_low_test, q_hi_test = (
+            np.minimum(q_low_test, q_hi_test),
+            np.maximum(q_low_test, q_hi_test),
+        )
+
+        # Para o CALIB set: precisa de quantis vindos de modelos que NÃO viram
+        # essas linhas. Usa o mesmo split holdout que o calibrator/conformal usa.
+        ano_calib_cqr = (
+            args.calib_ano if args.calib_ano is not None else anos_treino[-1]
+        )
+        anos_treino_holdout = [a for a in anos_treino if a != ano_calib_cqr]
+        log.info("CQR: treinando LGBMs quantile holdout (anos=%s, calib=%d)",
+                 anos_treino_holdout, ano_calib_cqr)
+        train_holdout, calib_holdout = mf.split_temporal(
+            prep, anos_treino_holdout, ano_calib_cqr,
+        )
+        m_low_h = tr.treinar_lgbm(
+            train_holdout.X, train_holdout.y, train_holdout.cat_features,
+            overrides={"objective": "quantile", "alpha": a_low, "metric": "quantile"},
+            early_stopping_rounds=None,
+        )
+        m_hi_h = tr.treinar_lgbm(
+            train_holdout.X, train_holdout.y, train_holdout.cat_features,
+            overrides={"objective": "quantile", "alpha": a_hi, "metric": "quantile"},
+            early_stopping_rounds=None,
+        )
+        q_low_calib = sigmoid_logit(m_low_h.predict(calib_holdout.X))
+        q_hi_calib = sigmoid_logit(m_hi_h.predict(calib_holdout.X))
+        q_low_calib, q_hi_calib = (
+            np.minimum(q_low_calib, q_hi_calib),
+            np.maximum(q_low_calib, q_hi_calib),
+        )
+        y_calib_cqr = calib_holdout.y.to_numpy()
+
+        cqr_obj = cqr_mod.CQR(alpha=alpha_cqr).fit(q_low_calib, q_hi_calib, y_calib_cqr)
+        pred_lo_cqr, pred_hi_cqr = cqr_obj.predict_interval(q_low_test, q_hi_test)
+        cobertura_cqr = cf.coverage_observed(
+            test.y.values, pred_lo_cqr, pred_hi_cqr,
+        )
+        log.info(
+            "CQR: q_hat=%+.4f, cobertura observada (test)=%.3f",
+            cqr_obj.q_hat, cobertura_cqr,
+        )
+        cobertura_decil_cqr = cf.coverage_por_decil(
+            test.y.values, y_pred_pontual, pred_lo_cqr, pred_hi_cqr,
+            n_quantis=10,
+        )
 
     # 5) Métricas
     comp = ev.tabela_comparativa(test.y.values, preds)
@@ -488,6 +608,9 @@ def main() -> int:
     if pred_lo_mondrian is not None:
         preds_df["pred_lower_mondrian"] = pred_lo_mondrian
         preds_df["pred_upper_mondrian"] = pred_hi_mondrian
+    if pred_lo_cqr is not None:
+        preds_df["pred_lower_cqr"] = pred_lo_cqr
+        preds_df["pred_upper_cqr"] = pred_hi_cqr
     fio.save_processed(preds_df, "preds")
 
     if not args.no_save_model:
@@ -505,6 +628,7 @@ def main() -> int:
                 "calibrator": calibrator,            # None se --calibrate não foi passado
                 "split_conformal": split_conf,       # None se --conformal não foi passado
                 "mondrian_conformal": mondrian_conf,  # None se --conformal-mondrian não foi passado
+                "cqr": cqr_obj,                       # None se --cqr não foi passado
             }, f)
         log.info("modelo salvo em %s", model_path)
 
@@ -531,6 +655,9 @@ def main() -> int:
         mondrian_q_per_bin=(
             mondrian_conf.q_per_bin.tolist() if mondrian_conf is not None else None
         ),
+        cobertura_cqr=cobertura_cqr,
+        cobertura_decil_cqr=cobertura_decil_cqr,
+        q_hat_cqr=cqr_obj.q_hat if cqr_obj is not None else None,
     )
     report_path = PATHS["reports"] / "status_fase_4.md"
     report_path.write_text(md, encoding="utf-8")

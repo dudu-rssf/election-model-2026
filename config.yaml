@@ -7,7 +7,7 @@
 
 # Modo de execução: dev (amostra reduzida) ou prod (pipeline completo)
 # ATENÇÃO: manter "dev" no Cowork. Trocar para "prod" apenas na máquina pesada.
-mode: dev
+mode: prod
 
 # Semente global — fixa em todos os módulos (numpy, random, lgbm, pymc)
 seed: 42

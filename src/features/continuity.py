@@ -267,6 +267,16 @@ def features_continuity(
     hist = calcular_historico_continuidade(df_prefeito, df_partidos_prefeito)
 
     anos = sorted({int(a) for a in anos_alvo})
+    anos_sem_map = [a for a in anos if a not in map_ano_para_municipal]
+    if anos_sem_map:
+        # Anos sem antecedente no map (ex: 1996 com MUNICIPAL_TO_MUNICIPAL_ANTERIOR)
+        # caem fora do painel modelado em panel.py — aqui também pulamos.
+        logger.warning(
+            "features_continuity: anos %s sem mapping em map_ano_para_municipal "
+            "— pulados (sem features de continuidade pra esses anos).",
+            anos_sem_map,
+        )
+        anos = [a for a in anos if a in map_ano_para_municipal]
     pares = [(a, map_ano_para_municipal[a]) for a in anos]
 
     linhas = []
