@@ -136,13 +136,13 @@
 
 ## Cobertura conformal (Mondrian — estratificado por bin de pred)
 
-**Cobertura observada (test):** 0.909 | **q̂ por bin:** [0.003, 0.005, 0.007, 0.009, 0.010, 0.010, 0.009, 0.010, 0.013, 0.045]
+**Cobertura observada (test):** 0.905 | **q̂ por bin:** [0.001, 0.005, 0.007, 0.009, 0.010, 0.010, 0.009, 0.010, 0.013, 0.045]
 
 **Cobertura por decil de pred — Mondrian:**
 
 | decil | n | pred_min | pred_max | cobertura |
 | --- | --- | --- | --- | --- |
-| 0.0000 | 1505.0000 | 0.0001 | 0.0255 | 0.9535 |
+| 0.0000 | 1505.0000 | 0.0001 | 0.0255 | 0.9076 |
 | 1.0000 | 1505.0000 | 0.0255 | 0.0915 | 0.8784 |
 | 2.0000 | 1504.0000 | 0.0916 | 0.2193 | 0.8956 |
 | 3.0000 | 1505.0000 | 0.2194 | 0.3205 | 0.9282 |
@@ -154,6 +154,40 @@
 | 9.0000 | 1495.0000 | 0.6705 | 1.0000 | 0.8856 |
 
 > Mondrian deve dar cobertura aproximadamente uniforme ao longo dos decis (cobertura condicional).
+
+## Cobertura conformal (MondrianCategorical — estratos por `sigla_partido`, `regiao`)
+
+**Cobertura observada (test):** 0.883 | **Estratos:** 158 (fallback global: 22)
+
+**Cobertura por decil de pred — MondrianCategorical:**
+
+| decil | n | pred_min | pred_max | cobertura |
+| --- | --- | --- | --- | --- |
+| 0.0000 | 1505.0000 | 0.0001 | 0.0255 | 0.9894 |
+| 1.0000 | 1505.0000 | 0.0255 | 0.0915 | 0.9488 |
+| 2.0000 | 1504.0000 | 0.0916 | 0.2193 | 0.9362 |
+| 3.0000 | 1505.0000 | 0.2194 | 0.3205 | 0.9535 |
+| 4.0000 | 1505.0000 | 0.3205 | 0.3938 | 0.9462 |
+| 5.0000 | 1504.0000 | 0.3938 | 0.4527 | 0.9335 |
+| 6.0000 | 1505.0000 | 0.4527 | 0.5040 | 0.9701 |
+| 7.0000 | 1525.0000 | 0.5052 | 0.5563 | 0.9154 |
+| 8.0000 | 1494.0000 | 0.5589 | 0.6704 | 0.6680 |
+| 9.0000 | 1495.0000 | 0.6705 | 1.0000 | 0.5639 |
+
+**Top 10 estratos com menor cobertura empírica:**
+
+| estrato | n | cobertura |
+| --- | --- | --- |
+| REPUBLICANOS|Norte | 133 | 0.4511 |
+| AVANTE|Centro-Oeste | 6 | 0.5000 |
+| PV|Nordeste | 18 | 0.5556 |
+| PODE|Centro-Oeste | 36 | 0.7222 |
+| PRTB|Centro-Oeste | 4 | 0.7500 |
+| PRTB|Sul | 9 | 0.7778 |
+| PC do B|Nordeste | 41 | 0.7805 |
+| PRTB|Nordeste | 14 | 0.7857 |
+| UNIÃO|Centro-Oeste | 239 | 0.7866 |
+| AVANTE|Sudeste | 147 | 0.7959 |
 
 ## Cobertura conformal (CQR — Conformalized Quantile Regression)
 

@@ -156,13 +156,11 @@
 
 > Mondrian deve dar cobertura aproximadamente uniforme ao longo dos decis (cobertura condicional).
 
-## Cobertura conformal (CQR — Conformalized Quantile Regression)
+## Cobertura conformal (MondrianCategorical — estratos por `sigla_partido`, `regiao`)
 
-**Cobertura observada (test):** 0.860 | **q̂ CQR:** +0.0133
+**Cobertura observada (test):** 0.868 | **Estratos:** 65 (fallback global: 0)
 
-> CQR usa 2 LGBMs quantile pra modelar `[q_low(x), q_hi(x)]` diretamente, depois conformaliza a margem. Intervalos adaptativos: largura cresce onde o modelo prevê dispersão maior.
-
-**Cobertura por decil de pred — CQR:**
+**Cobertura por decil de pred — MondrianCategorical:**
 
 | decil | n | pred_min | pred_max | cobertura |
 | --- | --- | --- | --- | --- |
@@ -171,11 +169,28 @@
 | 2.0000 | 6127.0000 | 0.0001 | 0.0003 | 1.0000 |
 | 3.0000 | 6127.0000 | 0.0003 | 0.0006 | 1.0000 |
 | 4.0000 | 6127.0000 | 0.0006 | 0.0017 | 1.0000 |
-| 5.0000 | 6127.0000 | 0.0017 | 0.0039 | 0.9959 |
-| 6.0000 | 6127.0000 | 0.0039 | 0.0101 | 0.8374 |
-| 7.0000 | 6127.0000 | 0.0101 | 0.0227 | 0.6130 |
-| 8.0000 | 6127.0000 | 0.0227 | 0.3337 | 0.3450 |
-| 9.0000 | 6127.0000 | 0.3337 | 0.9254 | 0.8134 |
+| 5.0000 | 6127.0000 | 0.0017 | 0.0039 | 0.9928 |
+| 6.0000 | 6127.0000 | 0.0039 | 0.0101 | 0.9674 |
+| 7.0000 | 6127.0000 | 0.0101 | 0.0227 | 0.7349 |
+| 8.0000 | 6127.0000 | 0.0227 | 0.3337 | 0.2544 |
+| 9.0000 | 6127.0000 | 0.3337 | 0.9254 | 0.7302 |
+
+**Top 10 estratos com menor cobertura empírica:**
+
+| estrato | n | cobertura |
+| --- | --- | --- |
+| PL|Sul | 1191 | 0.0000 |
+| PL|Centro-Oeste | 467 | 0.0021 |
+| PL|Sudeste | 1668 | 0.0192 |
+| PL|Norte | 450 | 0.0444 |
+| MDB|Sul | 1191 | 0.2233 |
+| MDB|Sudeste | 1668 | 0.3177 |
+| MDB|Centro-Oeste | 467 | 0.3212 |
+| MDB|Norte | 450 | 0.4311 |
+| PL|Nordeste | 1794 | 0.4783 |
+| PT|Sudeste | 1668 | 0.8147 |
+
+> MondrianCategorical foca em estratos categóricos (e.g., partido) onde o regime de erro pode ser distinto. Estratos sub-cobertos sinalizam exchangeability quebrada entre calib↔test (caso típico: PL 2022 com migração do Bolsonaro).
 
 ## Top feature importance (LightGBM, gain)
 
