@@ -193,18 +193,20 @@ def test_mondrian_intervalo_por_bin() -> None:
 
 
 def test_mondrian_fallback_global() -> None:
-    """Bins com poucos pontos caem pro q_global."""
+    """Bins com poucos pontos caem pro q_global.
+
+    Nota: qcut equaliza os tamanhos dos bins, então pra forçar fallback
+    de forma determinística usamos `min_per_bin` maior que o tamanho
+    natural dos bins (50 pts / 10 bins = 5 pts/bin; min_per_bin=20).
+    """
     rng = np.random.default_rng(2)
-    # 100 pontos em pred=[0, 0.5], 5 pontos em pred=[0.9, 1.0]
-    pred = np.concatenate([
-        rng.uniform(0, 0.5, size=100),
-        rng.uniform(0.9, 1.0, size=5),
-    ])
-    residuos = np.abs(rng.normal(0, 0.05, size=len(pred)))
-    mc = cf.MondrianConformal(alpha=0.1, n_bins=5, min_per_bin=10).fit(pred, residuos)
-    # último bin tem só ~5 pontos -> fallback
+    pred = rng.uniform(0, 1, size=50)
+    residuos = np.abs(rng.normal(0, 0.05, size=50))
+    mc = cf.MondrianConformal(
+        alpha=0.1, n_bins=10, min_per_bin=20,
+    ).fit(pred, residuos)
     assert len(mc.bins_fallback) >= 1
-    assert mc.q_per_bin[-1] == mc.q_global
+    assert any(q == mc.q_global for q in mc.q_per_bin)
 
 
 def test_mondrian_cobertura_condicional() -> None:
@@ -267,6 +269,116 @@ def test_mondrian_shape_mismatch() -> None:
 
 
 # ============================================================
+# MondrianCategorical
+# ============================================================
+def test_mondrian_cat_fit_basico() -> None:
+    """q̂ por estrato + fallback global pra estratos pequenos."""
+    rng = np.random.default_rng(0)
+    # 3 estratos com distribuições de resíduo distintas
+    s_a = ["A"] * 50
+    s_b = ["B"] * 50
+    s_c = ["C"] * 5  # pequeno → fallback
+    strata = np.array(s_a + s_b + s_c)
+    res = np.concatenate([
+        np.abs(rng.normal(0, 0.05, size=50)),  # A com cauda fina
+        np.abs(rng.normal(0, 0.20, size=50)),  # B com cauda larga
+        np.abs(rng.normal(0, 0.10, size=5)),
+    ])
+    mc = cf.MondrianCategorical(alpha=0.1, min_per_stratum=10).fit(strata, res)
+    assert "C" in mc.strata_fallback
+    assert mc.q_per_stratum["C"] == mc.q_global
+    # B deve ter q maior que A
+    assert mc.q_per_stratum["B"] > mc.q_per_stratum["A"]
+
+
+def test_mondrian_cat_predict_intervalo() -> None:
+    """predict_interval usa q̂ do estrato; estrato novo cai no global."""
+    rng = np.random.default_rng(1)
+    strata_calib = np.array(["X"] * 100 + ["Y"] * 100)
+    res = np.concatenate([
+        np.abs(rng.normal(0, 0.05, size=100)),
+        np.abs(rng.normal(0, 0.15, size=100)),
+    ])
+    mc = cf.MondrianCategorical(alpha=0.1, min_per_stratum=10).fit(strata_calib, res)
+
+    y_pred = np.array([0.5, 0.5, 0.5])
+    strata_test = np.array(["X", "Y", "Z_NUNCA_VISTO"])
+    lo, hi = mc.predict_interval(y_pred, strata_test)
+    # X é mais estreito que Y
+    assert (hi[0] - lo[0]) < (hi[1] - lo[1])
+    # Z desconhecido recebe q_global
+    assert (hi[2] - lo[2]) == pytest.approx(2 * mc.q_global)
+
+
+def test_mondrian_cat_cobertura_condicional() -> None:
+    """Cobertura empírica ≈ 1-α em cada estrato com dados exchangeáveis."""
+    rng = np.random.default_rng(7)
+    n_per = 300
+    rows = []
+    for s, sigma in [("PT", 0.03), ("PL", 0.10), ("MDB", 0.05)]:
+        for _ in range(n_per):
+            rows.append({"strata": s, "sigma": sigma})
+    df_calib = pd.DataFrame(rows)
+    pred_calib = rng.uniform(0, 1, size=len(df_calib))
+    y_calib = pred_calib + rng.normal(0, df_calib["sigma"].values)
+    res_calib = np.abs(y_calib - pred_calib)
+
+    mc = cf.MondrianCategorical(alpha=0.1, min_per_stratum=20).fit(
+        df_calib["strata"].values, res_calib,
+    )
+
+    # Test com a mesma distribuição
+    df_test = pd.DataFrame(rows)
+    pred_test = rng.uniform(0, 1, size=len(df_test))
+    y_test = pred_test + rng.normal(0, df_test["sigma"].values)
+    lo, hi = mc.predict_interval(pred_test, df_test["strata"].values, clip=False)
+    cob = ((y_test >= lo) & (y_test <= hi)).mean()
+    assert 0.85 <= cob <= 0.95
+
+
+def test_mondrian_cat_residuos_negativos_raise() -> None:
+    mc = cf.MondrianCategorical(alpha=0.1, min_per_stratum=2)
+    strata = np.array(["A"] * 5 + ["B"] * 5)
+    res = np.concatenate([np.full(5, 0.1), np.array([-0.1, 0.2, 0.3, 0.4, 0.5])])
+    with pytest.raises(ValueError, match="negativos"):
+        mc.fit(strata, res)
+
+
+def test_mondrian_cat_shape_mismatch() -> None:
+    mc = cf.MondrianCategorical(alpha=0.1)
+    with pytest.raises(ValueError, match="shapes não batem"):
+        mc.fit(np.array(["A"] * 10), np.full(15, 0.1))
+
+
+def test_mondrian_cat_predict_sem_fit_raise() -> None:
+    mc = cf.MondrianCategorical(alpha=0.1)
+    with pytest.raises(RuntimeError, match="não foi ajustado"):
+        mc.predict_interval(np.array([0.5]), np.array(["A"]))
+
+
+# ============================================================
+# coverage_por_categoria
+# ============================================================
+def test_coverage_por_categoria() -> None:
+    df = pd.DataFrame({
+        "y":     [0.10, 0.50, 0.90, 0.30, 0.05],
+        "lo":    [0.05, 0.40, 0.85, 0.40, 0.00],
+        "hi":    [0.20, 0.60, 0.95, 0.60, 0.10],
+        "estrato": ["A", "A", "B", "A", "B"],
+    })
+    out = cf.coverage_por_categoria(df["y"], df["lo"], df["hi"], df["estrato"])
+    # A: 3 linhas, 2 cobertos (0.10 ✓, 0.50 ✓, 0.30 ✗) -> 2/3 = 0.667
+    # B: 2 linhas, 2 cobertos (0.90 ✓, 0.05 ✓) -> 1.0
+    assert set(out["estrato"]) == {"A", "B"}
+    a = out[out["estrato"] == "A"].iloc[0]
+    b = out[out["estrato"] == "B"].iloc[0]
+    assert a["n"] == 3
+    assert b["n"] == 2
+    assert a["cobertura"] == pytest.approx(2/3)
+    assert b["cobertura"] == pytest.approx(1.0)
+
+
+# ============================================================
 # coverage_por_decil
 # ============================================================
 def test_coverage_por_decil_shape() -> None:
@@ -292,3 +404,79 @@ def test_coverage_por_decil_shape_mismatch() -> None:
             lower=np.array([0.0, 0.4]),
             upper=np.array([0.2, 0.6]),
         )
+er_stratum["B"] > mc.q_per_stratum["A"]
+
+
+def test_mondrian_cat_predict_intervalo() -> None:
+    """predict_interval usa q̂ do estrato; estrato novo cai no global."""
+    rng = np.random.default_rng(1)
+    strata_calib = np.array(["X"] * 100 + ["Y"] * 100)
+    res = np.concatenate([
+        np.abs(rng.normal(0, 0.05, size=100)),
+        np.abs(rng.normal(0, 0.15, size=100)),
+    ])
+    mc = cf.MondrianCategorical(alpha=0.1, min_per_stratum=10).fit(strata_calib, res)
+    y_pred = np.array([0.5, 0.5, 0.5])
+    strata_test = np.array(["X", "Y", "Z_NUNCA_VISTO"])
+    lo, hi = mc.predict_interval(y_pred, strata_test)
+    assert (hi[0] - lo[0]) < (hi[1] - lo[1])
+    assert (hi[2] - lo[2]) == pytest.approx(2 * mc.q_global)
+
+
+def test_mondrian_cat_cobertura_condicional() -> None:
+    rng = np.random.default_rng(7)
+    n_per = 300
+    rows = []
+    for s, sigma in [("PT", 0.03), ("PL", 0.10), ("MDB", 0.05)]:
+        for _ in range(n_per):
+            rows.append({"strata": s, "sigma": sigma})
+    df_calib = pd.DataFrame(rows)
+    pred_calib = rng.uniform(0, 1, size=len(df_calib))
+    y_calib = pred_calib + rng.normal(0, df_calib["sigma"].values)
+    res_calib = np.abs(y_calib - pred_calib)
+    mc = cf.MondrianCategorical(alpha=0.1, min_per_stratum=20).fit(
+        df_calib["strata"].values, res_calib,
+    )
+    df_test = pd.DataFrame(rows)
+    pred_test = rng.uniform(0, 1, size=len(df_test))
+    y_test = pred_test + rng.normal(0, df_test["sigma"].values)
+    lo, hi = mc.predict_interval(pred_test, df_test["strata"].values, clip=False)
+    cob = ((y_test >= lo) & (y_test <= hi)).mean()
+    assert 0.85 <= cob <= 0.95
+
+
+def test_mondrian_cat_residuos_negativos_raise() -> None:
+    mc = cf.MondrianCategorical(alpha=0.1, min_per_stratum=2)
+    strata = np.array(["A"] * 5 + ["B"] * 5)
+    res = np.concatenate([np.full(5, 0.1), np.array([-0.1, 0.2, 0.3, 0.4, 0.5])])
+    with pytest.raises(ValueError, match="negativos"):
+        mc.fit(strata, res)
+
+
+def test_mondrian_cat_shape_mismatch() -> None:
+    mc = cf.MondrianCategorical(alpha=0.1)
+    with pytest.raises(ValueError, match="shapes não batem"):
+        mc.fit(np.array(["A"] * 10), np.full(15, 0.1))
+
+
+def test_mondrian_cat_predict_sem_fit_raise() -> None:
+    mc = cf.MondrianCategorical(alpha=0.1)
+    with pytest.raises(RuntimeError, match="não foi ajustado"):
+        mc.predict_interval(np.array([0.5]), np.array(["A"]))
+
+
+def test_coverage_por_categoria() -> None:
+    df = pd.DataFrame({
+        "y":     [0.10, 0.50, 0.90, 0.30, 0.05],
+        "lo":    [0.05, 0.40, 0.85, 0.40, 0.00],
+        "hi":    [0.20, 0.60, 0.95, 0.60, 0.10],
+        "estrato": ["A", "A", "B", "A", "B"],
+    })
+    out = cf.coverage_por_categoria(df["y"], df["lo"], df["hi"], df["estrato"])
+    assert set(out["estrato"]) == {"A", "B"}
+    a = out[out["estrato"] == "A"].iloc[0]
+    b = out[out["estrato"] == "B"].iloc[0]
+    assert a["n"] == 3
+    assert b["n"] == 2
+    assert a["cobertura"] == pytest.approx(2/3)
+    assert b["cobertura"] == pytest.approx(1.0)

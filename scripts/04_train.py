@@ -98,6 +98,21 @@ def parse_args() -> argparse.Namespace:
                         "pred_upper_cqr — intervalos adaptativos que herdam "
                         "heterocedasticidade do modelo quantile. Pressupõe "
                         "--conformal (reusa o mesmo conjunto de calibração).")
+    p.add_argument("--conformal-mondrian-cat", action="store_true",
+                   help="também ajusta MondrianCategorical estratificado por "
+                        "(sigla_partido, regiao). Salva pred_lower_mondrian_cat/"
+                        "pred_upper_mondrian_cat. Útil para cobertura "
+                        "condicional por partido (e.g., decil 7 do bin-Mondrian "
+                        "sub-coberto pelo PL 2022). Pressupõe --conformal.")
+    p.add_argument("--conformal-mondrian-cat-cols", type=str,
+                   default="sigla_partido,regiao",
+                   help="colunas categóricas para o MondrianCategorical, "
+                        "separadas por vírgula. Default: 'sigla_partido,regiao'. "
+                        "Outras opções: 'sigla_partido' (só partido), "
+                        "'sigla_partido,sigla_uf' (mais granular).")
+    p.add_argument("--conformal-mondrian-cat-min-per-stratum", type=int,
+                   default=10,
+                   help="min_per_stratum do MondrianCategorical. Default 10.")
     return p.parse_args()
 
 
@@ -106,6 +121,55 @@ def configurar_logging(level: str) -> None:
         format="%(asctime)s %(levelname)s %(name)s | %(message)s",
         level=getattr(logging, level),
     )
+
+
+def _construir_estrato(
+    *,
+    df_calib: pd.DataFrame,
+    prep: mf.PreparedData,
+    strata_cols: list[str],
+) -> np.ndarray:
+    """Constrói labels de estrato pra calibração concatenando strata_cols.
+
+    df_calib tem 'idx_original' apontando pras linhas no prep (full train).
+    Para cada coluna em strata_cols, busca em prep.meta primeiro, senão
+    em prep.X. Junta com '|' para virar uma label única por linha.
+    """
+    idx = df_calib["idx_original"].to_numpy()
+    pieces: list[np.ndarray] = []
+    for col in strata_cols:
+        if col in prep.meta.columns:
+            pieces.append(prep.meta.iloc[idx][col].astype(str).to_numpy())
+        elif col in prep.X.columns:
+            pieces.append(prep.X.iloc[idx][col].astype(str).to_numpy())
+        else:
+            raise ValueError(
+                f"coluna de strata {col!r} não encontrada em prep.meta nem prep.X"
+            )
+    if len(pieces) == 1:
+        return pieces[0]
+    return np.array(["|".join(parts) for parts in zip(*pieces)])
+
+
+def _construir_estrato_test(
+    *,
+    test: mf.PreparedData,
+    strata_cols: list[str],
+) -> np.ndarray:
+    """Análogo a _construir_estrato mas pro test set."""
+    pieces: list[np.ndarray] = []
+    for col in strata_cols:
+        if col in test.meta.columns:
+            pieces.append(test.meta[col].astype(str).to_numpy())
+        elif col in test.X.columns:
+            pieces.append(test.X[col].astype(str).to_numpy())
+        else:
+            raise ValueError(
+                f"coluna de strata {col!r} não encontrada em test.meta nem test.X"
+            )
+    if len(pieces) == 1:
+        return pieces[0]
+    return np.array(["|".join(parts) for parts in zip(*pieces)])
 
 
 def determinar_split(anos_pres: list[int]) -> tuple[list[int], int]:
@@ -186,6 +250,12 @@ def gerar_relatorio(
     cobertura_cqr: float | None = None,
     cobertura_decil_cqr: pd.DataFrame | None = None,
     q_hat_cqr: float | None = None,
+    cobertura_mondrian_cat: float | None = None,
+    cobertura_decil_mondrian_cat: pd.DataFrame | None = None,
+    cobertura_categoria_mondrian_cat: pd.DataFrame | None = None,
+    mondrian_cat_strata_cols: list[str] | None = None,
+    mondrian_cat_n_estratos: int | None = None,
+    mondrian_cat_n_fallback: int | None = None,
 ) -> str:
     """Monta o markdown do status_fase_4.md."""
     linhas = [
@@ -285,6 +355,41 @@ def gerar_relatorio(
                     "",
                     "> Mondrian deve dar cobertura aproximadamente uniforme "
                     "ao longo dos decis (cobertura condicional).",
+                    "",
+                ]
+        if cobertura_mondrian_cat is not None:
+            cols_label = (
+                ", ".join(f"`{c}`" for c in (mondrian_cat_strata_cols or []))
+                or "?"
+            )
+            linhas += [
+                f"## Cobertura conformal (MondrianCategorical — estratos por {cols_label})",
+                "",
+                f"**Cobertura observada (test):** {cobertura_mondrian_cat:.3f} | "
+                f"**Estratos:** {mondrian_cat_n_estratos or '?'} "
+                f"(fallback global: {mondrian_cat_n_fallback or 0})",
+                "",
+            ]
+            if cobertura_decil_mondrian_cat is not None:
+                linhas += [
+                    "**Cobertura por decil de pred — MondrianCategorical:**",
+                    "",
+                    formatar_tabela_md(cobertura_decil_mondrian_cat),
+                    "",
+                ]
+            if cobertura_categoria_mondrian_cat is not None:
+                # Top 10 piores estratos (cobertura mais baixa)
+                piores = cobertura_categoria_mondrian_cat.head(10)
+                linhas += [
+                    "**Top 10 estratos com menor cobertura empírica:**",
+                    "",
+                    formatar_tabela_md(piores),
+                    "",
+                    "> MondrianCategorical foca em estratos categóricos (e.g., "
+                    "partido) onde o regime de erro pode ser distinto. "
+                    "Estratos sub-cobertos sinalizam exchangeability quebrada "
+                    "entre calib↔test (caso típico: PL 2022 com migração do "
+                    "Bolsonaro).",
                     "",
                 ]
         if cobertura_cqr is not None:
@@ -413,14 +518,21 @@ def main() -> int:
     # 4.6) Conformal prediction (opt-in)
     split_conf: cf.SplitConformal | None = None
     mondrian_conf: cf.MondrianConformal | None = None
+    mondrian_cat_conf: cf.MondrianCategorical | None = None
     pred_lo_split: np.ndarray | None = None
     pred_hi_split: np.ndarray | None = None
     pred_lo_mondrian: np.ndarray | None = None
     pred_hi_mondrian: np.ndarray | None = None
+    pred_lo_mondrian_cat: np.ndarray | None = None
+    pred_hi_mondrian_cat: np.ndarray | None = None
     cobertura_split: float | None = None
     cobertura_mondrian: float | None = None
+    cobertura_mondrian_cat: float | None = None
     cobertura_decil_split: pd.DataFrame | None = None
     cobertura_decil_mondrian: pd.DataFrame | None = None
+    cobertura_decil_mondrian_cat: pd.DataFrame | None = None
+    cobertura_categoria_mondrian_cat: pd.DataFrame | None = None
+    mondrian_cat_strata_cols: list[str] = []
 
     if args.conformal:
         # Reusar (se possível) o df de calibração já gerado pelo --calibrate.
@@ -493,6 +605,54 @@ def main() -> int:
             cobertura_decil_mondrian = cf.coverage_por_decil(
                 test.y.values, y_pred_pontual, pred_lo_mondrian, pred_hi_mondrian,
                 n_quantis=10,
+            )
+
+        # MondrianCategorical — opcional (estratificação por sigla/regiao)
+        if args.conformal_mondrian_cat:
+            mondrian_cat_strata_cols = [
+                c.strip() for c in args.conformal_mondrian_cat_cols.split(",")
+                if c.strip()
+            ]
+            log.info(
+                "conformal: ajustando MondrianCategorical (cols=%s, "
+                "min_per_stratum=%d)",
+                mondrian_cat_strata_cols,
+                args.conformal_mondrian_cat_min_per_stratum,
+            )
+            strata_calib = _construir_estrato(
+                df_calib=df_calib, prep=train,
+                strata_cols=mondrian_cat_strata_cols,
+            )
+            strata_test = _construir_estrato_test(
+                test=test, strata_cols=mondrian_cat_strata_cols,
+            )
+            mondrian_cat_conf = cf.MondrianCategorical(
+                alpha=args.conformal_alpha,
+                min_per_stratum=args.conformal_mondrian_cat_min_per_stratum,
+                min_q_factor=args.conformal_min_q_factor,
+            ).fit(strata_calib, residuos_abs)
+            pred_lo_mondrian_cat, pred_hi_mondrian_cat = (
+                mondrian_cat_conf.predict_interval(y_pred_pontual, strata_test)
+            )
+            cobertura_mondrian_cat = cf.coverage_observed(
+                test.y.values, pred_lo_mondrian_cat, pred_hi_mondrian_cat,
+            )
+            log.info(
+                "MondrianCategorical: cobertura observada (test)=%.3f, "
+                "n_estratos=%d, fallback=%d, floored=%d",
+                cobertura_mondrian_cat,
+                len(mondrian_cat_conf.q_per_stratum),
+                len(mondrian_cat_conf.strata_fallback),
+                len(mondrian_cat_conf.strata_floored),
+            )
+            cobertura_decil_mondrian_cat = cf.coverage_por_decil(
+                test.y.values, y_pred_pontual,
+                pred_lo_mondrian_cat, pred_hi_mondrian_cat,
+                n_quantis=10,
+            )
+            cobertura_categoria_mondrian_cat = cf.coverage_por_categoria(
+                test.y.values, pred_lo_mondrian_cat, pred_hi_mondrian_cat,
+                strata_test,
             )
 
     # 4.7) CQR — Conformalized Quantile Regression (opt-in)
@@ -611,6 +771,9 @@ def main() -> int:
     if pred_lo_cqr is not None:
         preds_df["pred_lower_cqr"] = pred_lo_cqr
         preds_df["pred_upper_cqr"] = pred_hi_cqr
+    if pred_lo_mondrian_cat is not None:
+        preds_df["pred_lower_mondrian_cat"] = pred_lo_mondrian_cat
+        preds_df["pred_upper_mondrian_cat"] = pred_hi_mondrian_cat
     fio.save_processed(preds_df, "preds")
 
     if not args.no_save_model:
@@ -628,6 +791,10 @@ def main() -> int:
                 "calibrator": calibrator,            # None se --calibrate não foi passado
                 "split_conformal": split_conf,       # None se --conformal não foi passado
                 "mondrian_conformal": mondrian_conf,  # None se --conformal-mondrian não foi passado
+                "mondrian_categorical": mondrian_cat_conf,  # None se --conformal-mondrian-cat não foi passado
+                "mondrian_categorical_strata_cols": (
+                    mondrian_cat_strata_cols if mondrian_cat_conf is not None else None
+                ),
                 "cqr": cqr_obj,                       # None se --cqr não foi passado
             }, f)
         log.info("modelo salvo em %s", model_path)
@@ -658,6 +825,20 @@ def main() -> int:
         cobertura_cqr=cobertura_cqr,
         cobertura_decil_cqr=cobertura_decil_cqr,
         q_hat_cqr=cqr_obj.q_hat if cqr_obj is not None else None,
+        cobertura_mondrian_cat=cobertura_mondrian_cat,
+        cobertura_decil_mondrian_cat=cobertura_decil_mondrian_cat,
+        cobertura_categoria_mondrian_cat=cobertura_categoria_mondrian_cat,
+        mondrian_cat_strata_cols=(
+            mondrian_cat_strata_cols if mondrian_cat_conf is not None else None
+        ),
+        mondrian_cat_n_estratos=(
+            len(mondrian_cat_conf.q_per_stratum)
+            if mondrian_cat_conf is not None else None
+        ),
+        mondrian_cat_n_fallback=(
+            len(mondrian_cat_conf.strata_fallback)
+            if mondrian_cat_conf is not None else None
+        ),
     )
     report_path = PATHS["reports"] / "status_fase_4.md"
     report_path.write_text(md, encoding="utf-8")

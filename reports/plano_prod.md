@@ -45,6 +45,14 @@ python scripts/04_train.py --calibrate --conformal --conformal-mondrian
 #   models/lgbm_v1.pkl              modelo + calibrador + conformal
 #   data/processed/preds.parquet    pred + intervalos
 #   reports/status_fase_4.md        relatório completo
+
+# (opcional) Adicionar Mondrian categórico estratificado por (sigla, regiao):
+python scripts/04_train.py --calibrate --conformal --conformal-mondrian \
+    --conformal-mondrian-cat
+# Salva pred_lower_mondrian_cat/pred_upper_mondrian_cat. Cobertura
+# condicional por partido — útil quando o bin-Mondrian sub-cobre
+# casos específicos (e.g., decil 7 do PL 2022). Ver seção
+# "MondrianCategorical" em reports/status_fase_4.md.
 ```
 
 ## Ordem de execução (prefeito)
@@ -55,6 +63,10 @@ python scripts/03_features_prefeito.py
 python scripts/04_train_prefeito.py --calibrate --conformal --conformal-mondrian
 # Saídas em models/lgbm_prefeito_v1.pkl, preds_prefeito.parquet,
 # reports/status_fase_4_5.md.
+
+# (opcional) Mondrian categórico:
+python scripts/04_train_prefeito.py --calibrate --conformal --conformal-mondrian \
+    --conformal-mondrian-cat
 ```
 
 ## Ordem de execução (Fase 5 — agregação UF/nacional)
