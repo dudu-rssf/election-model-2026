@@ -53,6 +53,9 @@ FEATURES_BINARIAS: list[str] = [
     "alinhado_gov_vigente_coligacao",
     "alinhado_gov_concorrente_partido",
     "alinhado_gov_concorrente_coligacao",
+    # #60 fase 2: 1 se share_pesquisa_uf veio de pesquisa estadual,
+    # 0 se caiu no fallback nacional, NaN se sem pesquisa nem nacional.
+    "pesquisa_uf_disponivel",
 ]
 
 FEATURES_NUMERICAS: list[str] = [
@@ -73,9 +76,13 @@ FEATURES_NUMERICAS: list[str] = [
     "swing_share_1t",
     "volatilidade_partido",
     "share_dep_federal_partido",
-    # #60: intenção de voto pré-eleição (Datafolha pré 1º turno).
+    # #60 fase 1: intenção de voto pré-eleição nacional (Datafolha).
     # NaN para anos/partidos sem pesquisa — LGBM lida nativamente.
     "share_pesquisa_nacional",
+    # #60 fase 2: intenção de voto estadual com fallback nacional.
+    # Onde Datafolha publicou estaduais (SP/MG/RJ/RS/BA/PE/CE/PR), usa
+    # esse valor; senão, mesmo valor de share_pesquisa_nacional.
+    "share_pesquisa_uf",
 ]
 
 # Colunas auxiliares que não entram no X mas ficam em `meta` pra análise.

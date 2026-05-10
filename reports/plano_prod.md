@@ -231,13 +231,37 @@ gerada em `src.features.historical` mas foi removida de
 nível não adiciona signal a um modelo com features categóricas
 potentes — só **dados genuinamente novos** (como pesquisas) ajudam.
 
-### Próximo step (#60 fase 2)
-- Estender `pesquisas_nacional.csv` para `pesquisas_uf.csv` com
-  intenção de voto por (ano, sigla_uf, sigla_partido). Datafolha tem
-  estaduais pra SP/MG/RJ/RS/BA/PE/CE/PR. Para outras 19 UFs, fallback
-  para o nacional.
-- Adicionar feature `share_pesquisa_uf` em `src/features/pesquisas.py`.
-- Re-treinar e validar PL 2022 MAE alvo < 0.03.
+### #60 fase 2: pesquisas estaduais (CONCLUÍDA 2026-05-10)
+
+Implementada em `data/raw/pesquisas_uf.csv` (56 entradas, Datafolha
+estadual SP/MG/RJ/RS/BA/PE/CE/PR pra 2018+2022) + função
+`aplicar_pesquisa_uf` em `src/features/pesquisas.py` com fallback
+nacional. Adicionadas duas features:
+
+  * `share_pesquisa_uf` — pesquisa estadual onde existe, senão
+    fallback nacional
+  * `pesquisa_uf_disponivel` — binária 1/0/NaN sinalizando origem
+
+**Resultado** (vs Fase 1 só nacional):
+
+| Métrica | Fase 1 (só nac) | Fase 2 (+UF) | Δ |
+| --- | --- | --- | --- |
+| MAE 2022 total | 0.0134 | 0.0099 | -26% |
+| PL 2022 MAE | 0.118 | 0.080 | -32% |
+| PL bias nacional | -12pp | -8pp | -33% |
+| Feature importance | pesq_nac #1 | pesq_nac #2, pesq_uf #4 | UF agrega |
+
+LGBM usa AS DUAS features de pesquisa — não foram redundantes.
+
+### Próximas iterações possíveis
+
+1. **Expandir `pesquisas_uf.csv`** pra estados onde PL teve picos não
+   capturados (MT, RO, SC, RR — fontes Atlas/Paraná Pesquisas/CNT).
+   Cada UF nova esperada ajuda 1-3pp no PL MAE.
+2. **Pesquisas 2014** — atualmente CSV só tem 2018+2022. Adicionar
+   2014 pode estabilizar o sinal histórico (Aécio/Marina).
+3. **Atualizar valores `estimativa_claude_datafolha`** com os
+   reais Datafolha — auditoria igual à que foi feita pro nacional.
 
 ## Decisão pendente: pós-Fase 5
 

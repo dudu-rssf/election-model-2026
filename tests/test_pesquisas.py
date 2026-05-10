@@ -108,3 +108,86 @@ def test_features_pesquisa_pipe_completo(tmp_path: Path) -> None:
     out = fpesq.features_pesquisa(long, p)
     assert out["share_pesquisa_nacional"].notna().all()
     assert out.iloc[0]["share_pesquisa_nacional"] == pytest.approx(0.30)
+
+
+# ============================================================
+# pesquisa_uf — fallback nacional
+# ============================================================
+def _csv_uf_minimo(tmp_path: Path) -> Path:
+    p = tmp_path / "pesquisas_uf.csv"
+    p.write_text(
+        "ano,sigla_uf,sigla_partido,share_pesquisa,fonte,obs\n"
+        "2022,SP,PL,0.35,test,SP forte\n"
+        "2022,SP,PT,0.47,test,SP forte\n"
+        "2022,BA,PL,0.23,test,PL fraco BA\n"
+        "2022,BA,PT,0.64,test,PT forte BA\n",
+        encoding="utf-8",
+    )
+    return p
+
+
+def test_carregar_pesquisas_uf_schema(tmp_path: Path) -> None:
+    p = _csv_uf_minimo(tmp_path)
+    df = fpesq.carregar_pesquisas_uf(p)
+    assert list(df.columns) == ["ano", "sigla_uf", "sigla_partido", "share_pesquisa"]
+    assert len(df) == 4
+
+
+def test_aplicar_pesquisa_uf_com_fallback(tmp_path: Path) -> None:
+    """UF onde existe usa estadual; UF sem entrada usa fallback nacional."""
+    p_uf = _csv_uf_minimo(tmp_path)
+    # Nacional cobre PL/PT 2022 e PSL 2018
+    p_nac = tmp_path / "nac.csv"
+    p_nac.write_text(
+        "ano,sigla_partido,share_pesquisa\n"
+        "2022,PL,0.40\n"
+        "2022,PT,0.48\n"
+        "2018,PSL,0.36\n",
+        encoding="utf-8",
+    )
+    pq_uf = fpesq.carregar_pesquisas_uf(p_uf)
+    pq_nac = fpesq.carregar_pesquisas_nacional(p_nac)
+
+    long = pd.DataFrame({
+        "ano_presidencial": [2022, 2022, 2022, 2022, 2018, 2022],
+        "sigla_uf": ["SP", "SP", "RR", "BA", "MT", "MA"],
+        "sigla_partido": ["PL", "PT", "PL", "PL", "PSL", "NOVO"],
+    })
+    out = fpesq.aplicar_pesquisa_uf(long, pq_uf, pq_nac)
+
+    # SP/PL: estadual = 0.35 (não nacional 0.40)
+    assert out.iloc[0]["share_pesquisa_uf"] == pytest.approx(0.35)
+    assert out.iloc[0]["pesquisa_uf_disponivel"] == 1.0
+    # SP/PT: estadual = 0.47
+    assert out.iloc[1]["share_pesquisa_uf"] == pytest.approx(0.47)
+    # RR/PL: sem estadual, fallback nacional 0.40
+    assert out.iloc[2]["share_pesquisa_uf"] == pytest.approx(0.40)
+    assert out.iloc[2]["pesquisa_uf_disponivel"] == 0.0
+    # BA/PL: estadual = 0.23 (PL fraco regionalmente)
+    assert out.iloc[3]["share_pesquisa_uf"] == pytest.approx(0.23)
+    assert out.iloc[3]["pesquisa_uf_disponivel"] == 1.0
+    # MT/PSL/2018: sem estadual, fallback nacional 0.36
+    assert out.iloc[4]["share_pesquisa_uf"] == pytest.approx(0.36)
+    assert out.iloc[4]["pesquisa_uf_disponivel"] == 0.0
+    # MA/NOVO/2022: nem UF nem nacional → NaN
+    assert pd.isna(out.iloc[5]["share_pesquisa_uf"])
+    assert pd.isna(out.iloc[5]["pesquisa_uf_disponivel"])
+
+
+def test_aplicar_pesquisa_uf_nao_duplica_linhas(tmp_path: Path) -> None:
+    pq_uf = fpesq.carregar_pesquisas_uf(_csv_uf_minimo(tmp_path))
+    p_nac = tmp_path / "nac.csv"
+    p_nac.write_text(
+        "ano,sigla_partido,share_pesquisa\n"
+        "2022,PL,0.40\n",
+        encoding="utf-8",
+    )
+    pq_nac = fpesq.carregar_pesquisas_nacional(p_nac)
+
+    # UF com (ano, uf, partido) duplicado → erro
+    pq_uf_bad = pd.concat([pq_uf, pq_uf.iloc[[0]]], ignore_index=True)
+    long = pd.DataFrame({
+        "ano_presidencial": [2022], "sigla_uf": ["SP"], "sigla_partido": ["PL"],
+    })
+    with pytest.raises(RuntimeError, match=r"merge UF expandiu"):
+        fpesq.aplicar_pesquisa_uf(long, pq_uf_bad, pq_nac)

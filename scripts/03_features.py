@@ -180,17 +180,32 @@ def consolidar(insumos: dict, feats: dict) -> "pd.DataFrame":
             suffixes=("", f"_{nome}"),
         )
 
-    # ----- (ano, partido) — pesquisas nacionais -----
-    pesq_path = PATHS["data_raw"] / "pesquisas_nacional.csv"
-    if pesq_path.exists():
+    # ----- (ano, partido) — pesquisas nacionais (#60 fase 1) -----
+    pesq_nac_path = PATHS["data_raw"] / "pesquisas_nacional.csv"
+    pesq_uf_path = PATHS["data_raw"] / "pesquisas_uf.csv"
+
+    if pesq_nac_path.exists():
         base = fpesq.features_pesquisa(
-            base, pesq_path,
+            base, pesq_nac_path,
             ano_col="ano_presidencial", partido_col="sigla_partido",
         )
     else:
         log.warning(
             "pesquisas_nacional.csv não encontrado em %s — pulando feature "
-            "share_pesquisa_nacional. Crie o CSV pra ativar #60.", pesq_path,
+            "share_pesquisa_nacional. Crie o CSV pra ativar #60.", pesq_nac_path,
+        )
+
+    # ----- (ano, UF, partido) — pesquisas estaduais (#60 fase 2) -----
+    if pesq_uf_path.exists() and pesq_nac_path.exists():
+        base = fpesq.features_pesquisa_com_uf(
+            base, pesq_uf_path, pesq_nac_path,
+            ano_col="ano_presidencial", uf_col="sigla_uf",
+            partido_col="sigla_partido",
+        )
+    else:
+        log.warning(
+            "pesquisas_uf.csv não encontrado em %s — pulando feature "
+            "share_pesquisa_uf. #60 fase 2 inativa.", pesq_uf_path,
         )
 
     log.info("features consolidadas: %d linhas × %d colunas", *base.shape)
