@@ -251,6 +251,67 @@ def test_historical_sucessao_remapeia_lag():
     assert psl_2018["lag_share_1t_sucessao"] == pytest.approx(0.6)
 
 
+def test_historical_lag_uf_sucessao_pondera_por_eleitorado() -> None:
+    """lag_share_1t_uf_sucessao = média ponderada por eleitorado do
+    lag_sucessao em todos os muns da UF.
+
+    Setup: 2 UFs (SP, RJ) × 2 muns cada × 2 anos.
+    PSL 2018 em SP: 0.50 (mun A 100k votos) e 0.60 (mun B 100k votos).
+    PSL 2018 em RJ: 0.30 (mun C 50k votos) e 0.30 (mun D 50k votos).
+    Esperado: PL 2022 SP UF lag = 0.55; PL 2022 RJ UF lag = 0.30.
+    """
+    rows = []
+    config = {
+        ("3550308", "SP", 100_000): {2018: {"PSL": 0.50, "PT": 0.30},
+                                     2022: {"PL": 0.45, "PT": 0.40}},
+        ("3506003", "SP", 100_000): {2018: {"PSL": 0.60, "PT": 0.20},
+                                     2022: {"PL": 0.55, "PT": 0.30}},
+        ("3304557", "RJ", 50_000): {2018: {"PSL": 0.30, "PT": 0.50},
+                                    2022: {"PL": 0.20, "PT": 0.65}},
+        ("3303302", "RJ", 50_000): {2018: {"PSL": 0.30, "PT": 0.50},
+                                    2022: {"PL": 0.25, "PT": 0.60}},
+    }
+    for (mun, uf, eleitorado), por_ano in config.items():
+        for ano, shares in por_ano.items():
+            for partido, share in shares.items():
+                rows.append({
+                    "ano_presidencial": ano, "id_municipio": mun,
+                    "sigla_uf": uf, "sigla_partido": partido,
+                    "share_1t": share, "total_votos_mun": eleitorado,
+                })
+    long = pd.DataFrame(rows)
+
+    hist = historical.features_historical(
+        long, anos=[2018, 2022], sucessoes={"PL": {2022: "PSL"}},
+        ano_col="ano_presidencial",
+    )
+    pl_2022 = hist[
+        (hist["sigla_partido"] == "PL") & (hist["ano_presidencial"] == 2022)
+    ]
+    sp = pl_2022[pl_2022["id_municipio"].isin(["3550308", "3506003"])]
+    rj = pl_2022[pl_2022["id_municipio"].isin(["3304557", "3303302"])]
+    # SP: (100k*0.50 + 100k*0.60) / 200k = 0.55
+    assert sp["lag_share_1t_uf_sucessao"].iloc[0] == pytest.approx(0.55)
+    # RJ: (50k*0.30 + 50k*0.30) / 100k = 0.30
+    assert rj["lag_share_1t_uf_sucessao"].iloc[0] == pytest.approx(0.30)
+    # Mesmo valor pra todos os muns da mesma UF (broadcast)
+    assert sp["lag_share_1t_uf_sucessao"].nunique() == 1
+    assert rj["lag_share_1t_uf_sucessao"].nunique() == 1
+
+
+def test_historical_lag_uf_primeiro_ano_nan() -> None:
+    """No primeiro ano (sem lag disponível) lag_uf_sucessao deve ser NaN."""
+    rows = [
+        {"ano_presidencial": 2018, "id_municipio": "M1", "sigla_uf": "SP",
+         "sigla_partido": "PT", "share_1t": 0.4, "total_votos_mun": 1000},
+        {"ano_presidencial": 2018, "id_municipio": "M2", "sigla_uf": "SP",
+         "sigla_partido": "PT", "share_1t": 0.6, "total_votos_mun": 1000},
+    ]
+    long = pd.DataFrame(rows)
+    hist = historical.features_historical(long, anos=[2018], ano_col="ano_presidencial")
+    assert hist["lag_share_1t_uf_sucessao"].isna().all()
+
+
 # ============================================================
 # continuity
 # ============================================================

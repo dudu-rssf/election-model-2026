@@ -175,6 +175,70 @@ Se PL 2022 MAE não cair pra < 0.30, há um bug estrutural além de "não tem an
 2. Se PL 2022 estiver bem calibrado, **encerrar Fase 4 oficialmente** e abrir Fase 5 (escopo: agregação UF→nacional, conformal estratificado por região, ou início de #60 pesquisas).
 3. Snapshot do `models/lgbm_v1.pkl` prod com tag git, pra reprodutibilidade.
 
+## Pesquisas como feature (#60 PoC)
+
+Adicionado em sessão de 2026-05-09. Feature `share_pesquisa_nacional`
+em `src/features/pesquisas.py` puxa de `data/raw/pesquisas_nacional.csv`
+(manual, atualmente com estimativas). Reduz MAE 2022 de **0.0174 → 0.0090**
+e bias do PL 2022 de **+15pp → −5pp** (70% redução em magnitude).
+
+```bash
+# Após editar pesquisas_nacional.csv (especialmente pra novos anos/partidos):
+python scripts/03_features.py --skip-report-top
+python scripts/04_train.py --conformal --conformal-mondrian --conformal-min-q-factor 0.2
+```
+
+### Caveats
+1. **Auditar valores em `pesquisas_nacional.csv`** antes de tratar como
+   verdade — os valores atuais foram revisados pelo usuário em 2026-05-09
+   contra Datafolha histórico, mas vale rever periodicamente.
+
+   **Observação contraintuitiva descoberta**: com valores Datafolha
+   reais (PL 2022 = 0.40), MAE = 0.013 e PL MAE = 0.118 (superestima
+   12pp). Com valores conservadores anteriores (PL 2022 = 0.33),
+   MAE = 0.009 e PL MAE = 0.068. A pesquisa "real" empurra mais a
+   predição mas sem granularidade UF o modelo superestima em estados
+   onde PL é fraco regionalmente (NE). Isso CONFIRMA que pesquisas
+   UF-level são mandatórias — pesquisa nacional precisa é menos
+   robusta que pesquisa nacional conservadora quando falta o sinal
+   regional. Mantemos os valores Datafolha reais por integridade
+   científica; o ganho real virá com a fase 2 do #60.
+2. **ISO calibrator atrapalha com pesquisa**: MAE iso ~0.014 vs raw
+   ~0.009. Foi treinado num regime sem pesquisa onde modelo subestimava.
+   Mantenha `--calibrate` ativo (afeta o LGBM principal, vide caveat 4),
+   mas use `pred_LightGBM_v1` raw na Fase 5, não `_iso`.
+3. **Cobertura agregada não subiu** mesmo o MAE caindo 50%. Razão:
+   conformal cobre por LINHA (mun×partido) e a propagação MC encolhe
+   intervalos no agregado por √n, ficando estreitos demais pra absorver
+   o erro RESIDUAL regional (PL/PDT no NE). Pra subir cobertura nacional
+   precisa de **pesquisas UF-level**.
+4. **`--calibrate` afeta o LGBM raw** misteriosamente: rodando com a
+   flag, MAE 2022 = 0.009; sem a flag, MAE = 0.013 (mesmas features e
+   seed). Provavelmente side-effect de random state quando o calibrator
+   treina um LGBM extra antes do conformal. **Sempre rode com
+   `--calibrate`** mesmo que vá descartar o `_iso`. Investigar a fundo
+   é trabalho separado (ver `src/models/calibrate.py` × `train.py`).
+
+### Tentativa: lag_share_1t_uf_sucessao (REVERTIDA)
+Tentamos adicionar média UF ponderada do `lag_share_1t_sucessao` como
+feature derivada (sem dado novo). Resultado: PL MAE 0.068 → 0.089
+(+31% PIOR), MAE geral 0.009 → 0.011 (+20%). Causa: o LGBM já tinha
+`sigla_uf` categórica + lag mun e capturava a interação UF
+nativamente; o agregado explícito redundou e provocou overfitting
+(calib 2018 → falsa confiança no test 2022). Coluna continua sendo
+gerada em `src.features.historical` mas foi removida de
+`FEATURES_NUMERICAS`. Lição: agregar features existentes em outro
+nível não adiciona signal a um modelo com features categóricas
+potentes — só **dados genuinamente novos** (como pesquisas) ajudam.
+
+### Próximo step (#60 fase 2)
+- Estender `pesquisas_nacional.csv` para `pesquisas_uf.csv` com
+  intenção de voto por (ano, sigla_uf, sigla_partido). Datafolha tem
+  estaduais pra SP/MG/RJ/RS/BA/PE/CE/PR. Para outras 19 UFs, fallback
+  para o nacional.
+- Adicionar feature `share_pesquisa_uf` em `src/features/pesquisas.py`.
+- Re-treinar e validar PL 2022 MAE alvo < 0.03.
+
 ## Decisão pendente: pós-Fase 5
 
 Fase 5a (agregação UF→nacional) está em prod. Próximos plausíveis:

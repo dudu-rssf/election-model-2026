@@ -7,27 +7,14 @@ Saída: DataFrame ao nível (ano × id_municipio × sigla_partido) com:
     lag_share_1t_sucessao       — idem, mas agrupando por sigla canônica
                                   (ver src.features.partido_sucessao). Para
                                   partidos sem mapeamento, igual ao lag_share_1t.
+    lag_share_1t_uf_sucessao    — média ponderada (por eleitorado) do
+                                  lag_share_1t_sucessao em todos os muns da
+                                  UF. Capta tendência regional do partido
+                                  (com sucessão) suavizando ruído municipal.
     lag2_share_1t               — share do partido duas eleições atrás.
     swing_share_1t              — share atual − lag.
     volatilidade_partido        — desvio padrão dos shares do partido no município
                                   considerando as eleições estritamente anteriores.
-
-As features são calculadas a partir de `<eixo>_long` (Fase 2) e juntadas no
-long original por (ano, id_municipio, sigla_partido).
-
-A coluna de ano é parametrizada via `ano_col` — default `'ano_presidencial'`
-(Fase 3). Para o modelo de prefeito (Fase 4.5) passe `ano_col='ano_municipal'`.
-
-Notas:
-  * Partidos ausentes no município num ano são tratados como share = 0 para
-    o cálculo, **mas** o lag/swing só é preenchido se existe registro direto
-    do partido no ano anterior (evita ruído em partidos que não concorreram).
-    Essa escolha é documentada para revisão; ver `SHARE_ZERO_SE_AUSENTE`.
-  * Volatilidade usa `ddof=0` (populacional, amostra inteira de eleições).
-  * O primeiro ano do histórico não tem lag → NaN.
-  * `lag_share_1t_sucessao` é deixado paralelo ao `lag_share_1t` propositalmente:
-    o modelo escolhe qual pesar mais. Quando não há `sucessoes`, as duas
-    colunas são idênticas.
 """
 from __future__ import annotations
 
@@ -45,11 +32,6 @@ SHARE_ZERO_SE_AUSENTE = True
 
 
 def _long_wide_partido(long: pd.DataFrame, ano_col: str) -> pd.DataFrame:
-    """DataFrame wide: cada (ano, mun, partido) tem um share (0 se ausente).
-
-    Reduz ruído quando o mesmo partido lança mais de um candidato no mesmo ano
-    (raro em presidencial, mais comum em eleições locais): soma shares.
-    """
     required = {ano_col, "id_municipio", "sigla_partido", "share_1t"}
     missing = required - set(long.columns)
     if missing:
@@ -69,10 +51,6 @@ def _long_wide_partido(long: pd.DataFrame, ano_col: str) -> pd.DataFrame:
 
 
 def _expand_universo_partido(agg: pd.DataFrame, ano_col: str) -> pd.DataFrame:
-    """Expande para todas combinações (ano, mun, partido_universo), preenchendo 0.
-
-    Universo de partidos = partidos que concorreram em pelo menos um ano no mun.
-    """
     if not SHARE_ZERO_SE_AUSENTE:
         return agg
 
@@ -99,13 +77,6 @@ def _lag_por_sigla_canonica(
     sucessoes: Mapping[str, Mapping[int, str]] | None,
     ano_col: str,
 ) -> pd.Series:
-    """Calcula lag_share_1t agrupando por sigla canônica ao invés de sigla bruta.
-
-    Canonicalização: dado (partido, ano), resolver para sigla predecessora quando
-    houver mapeamento — senão, sigla inalterada. Depois, re-agrega share_1t por
-    (ano, mun, canonical) — somando quando múltiplas siglas canonicalizam juntas
-    — e calcula o shift(1) na ordem temporal dentro do grupo (mun, canonical).
-    """
     df = aplicar_sucessao(
         exp,
         sucessoes,
@@ -139,29 +110,81 @@ def _lag_por_sigla_canonica(
     )
 
 
+def _adicionar_lag_uf_sucessao(
+    exp: pd.DataFrame,
+    long: pd.DataFrame,
+    *,
+    ano_col: str,
+) -> pd.DataFrame:
+    """Anexa `lag_share_1t_uf_sucessao` em `exp`.
+
+    Para cada (ano, sigla_uf, sigla_partido), computa a média ponderada
+    do `lag_share_1t_sucessao` em todos os municípios da UF, ponderando
+    por `total_votos_mun`. Valor NaN do lag não contribui.
+    """
+    if "lag_share_1t_sucessao" not in exp.columns:
+        raise ValueError("exp precisa ter lag_share_1t_sucessao computado")
+
+    mun_uf = (
+        long[["id_municipio", "sigla_uf"]]
+        .drop_duplicates(subset=["id_municipio"])
+    )
+    mun_uf["id_municipio"] = mun_uf["id_municipio"].astype("string")
+
+    if "total_votos_mun" in long.columns:
+        mun_votos = (
+            long.groupby([ano_col, "id_municipio"], as_index=False)[
+                "total_votos_mun"
+            ]
+            .first()
+        )
+        mun_votos["id_municipio"] = mun_votos["id_municipio"].astype("string")
+    else:
+        logger.warning(
+            "long sem total_votos_mun — lag_share_1t_uf_sucessao usa peso uniforme"
+        )
+        mun_votos = (
+            long[[ano_col, "id_municipio"]]
+            .drop_duplicates()
+            .assign(total_votos_mun=1.0)
+        )
+        mun_votos["id_municipio"] = mun_votos["id_municipio"].astype("string")
+
+    exp = exp.copy()
+    exp["id_municipio"] = exp["id_municipio"].astype("string")
+    exp = exp.merge(mun_uf, on="id_municipio", how="left")
+    exp = exp.merge(mun_votos, on=[ano_col, "id_municipio"], how="left")
+
+    mask = exp["lag_share_1t_sucessao"].notna()
+    sub = exp[mask].copy()
+    sub["_wp"] = sub["lag_share_1t_sucessao"] * sub["total_votos_mun"]
+    agg = (
+        sub.groupby(
+            [ano_col, "sigla_uf", "sigla_partido"], as_index=False, observed=True
+        )
+        .agg(_wp_sum=("_wp", "sum"), _w_sum=("total_votos_mun", "sum"))
+    )
+    agg["lag_share_1t_uf_sucessao"] = agg["_wp_sum"] / agg["_w_sum"]
+    agg = agg[[ano_col, "sigla_uf", "sigla_partido", "lag_share_1t_uf_sucessao"]]
+
+    exp = exp.merge(agg, on=[ano_col, "sigla_uf", "sigla_partido"], how="left")
+    exp = exp.drop(columns=["sigla_uf", "total_votos_mun"], errors="ignore")
+
+    n_com_lag = int(exp["lag_share_1t_uf_sucessao"].notna().sum())
+    pct = n_com_lag / len(exp) * 100 if len(exp) > 0 else 0.0
+    logger.info(
+        "lag_share_1t_uf_sucessao: %d/%d linhas com valor (%.1f%%)",
+        n_com_lag, len(exp), pct,
+    )
+    return exp
+
+
 def features_historical(
     long: pd.DataFrame,
     anos: Iterable[int] | None = None,
     sucessoes: Mapping[str, Mapping[int, str]] | None = None,
     ano_col: str = "ano_presidencial",
 ) -> pd.DataFrame:
-    """Calcula features históricas por (ano, mun, partido).
-
-    Args:
-        long: tabela long (Fase 2) — presidencial_long ou prefeito_long.
-        anos: filtro opcional — por padrão usa os anos presentes em `long`.
-        sucessoes: dict de mapeamento (sigla → ano → predecessor) vindo do
-            config.yaml. Se None ou {}, `lag_share_1t_sucessao` fica idêntico
-            a `lag_share_1t`.
-        ano_col: nome da coluna do eixo temporal — default `'ano_presidencial'`
-            (Fase 3). Para Fase 4.5 (prefeito) usar `'ano_municipal'`.
-
-    Returns:
-        DataFrame com colunas:
-            <ano_col>, id_municipio, sigla_partido,
-            lag_share_1t, lag_share_1t_sucessao, lag2_share_1t,
-            swing_share_1t, volatilidade_partido.
-    """
     agg = _long_wide_partido(long, ano_col=ano_col)
 
     if anos is not None:
@@ -182,12 +205,15 @@ def features_historical(
     exp["volatilidade_partido"] = grp["share_1t"].transform(_vol_expandida).astype("float64")
     exp["lag_share_1t_sucessao"] = _lag_por_sigla_canonica(exp, sucessoes, ano_col=ano_col)
 
+    exp = _adicionar_lag_uf_sucessao(exp, long, ano_col=ano_col)
+
     cols = [
         ano_col,
         "id_municipio",
         "sigla_partido",
         "lag_share_1t",
         "lag_share_1t_sucessao",
+        "lag_share_1t_uf_sucessao",
         "lag2_share_1t",
         "swing_share_1t",
         "volatilidade_partido",

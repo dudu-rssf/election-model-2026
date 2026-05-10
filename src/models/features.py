@@ -64,10 +64,18 @@ FEATURES_NUMERICAS: list[str] = [
     "anos_consecutivos_mesmo_grupo",
     "lag_share_1t",
     "lag_share_1t_sucessao",
+    # NOTA: lag_share_1t_uf_sucessao foi testada e REVERTIDA — provocou
+    # overfitting (q_global caiu 30% mas MAE 2022 piorou 20%). LGBM já
+    # tinha sigla_uf categórica + lag_mun, capturava a interação UF
+    # nativamente. Agregados explícitos redundam. Coluna ainda é gerada
+    # em features.parquet (src.features.historical) mas não entra no X.
     "lag2_share_1t",
     "swing_share_1t",
     "volatilidade_partido",
     "share_dep_federal_partido",
+    # #60: intenção de voto pré-eleição (Datafolha pré 1º turno).
+    # NaN para anos/partidos sem pesquisa — LGBM lida nativamente.
+    "share_pesquisa_nacional",
 ]
 
 # Colunas auxiliares que não entram no X mas ficam em `meta` pra análise.

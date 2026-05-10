@@ -39,6 +39,7 @@ from src.features import (  # noqa: E402
     continuity,
     historical,
     local_power,
+    pesquisas as fpesq,
     structural,
     vertical,
 )
@@ -177,6 +178,19 @@ def consolidar(insumos: dict, feats: dict) -> "pd.DataFrame":
         base = base.merge(
             df, on=["ano_presidencial", "id_municipio", "sigla_partido"], how="left",
             suffixes=("", f"_{nome}"),
+        )
+
+    # ----- (ano, partido) — pesquisas nacionais -----
+    pesq_path = PATHS["data_raw"] / "pesquisas_nacional.csv"
+    if pesq_path.exists():
+        base = fpesq.features_pesquisa(
+            base, pesq_path,
+            ano_col="ano_presidencial", partido_col="sigla_partido",
+        )
+    else:
+        log.warning(
+            "pesquisas_nacional.csv não encontrado em %s — pulando feature "
+            "share_pesquisa_nacional. Crie o CSV pra ativar #60.", pesq_path,
         )
 
     log.info("features consolidadas: %d linhas × %d colunas", *base.shape)
