@@ -253,13 +253,35 @@ nacional. Adicionadas duas features:
 
 LGBM usa AS DUAS features de pesquisa — não foram redundantes.
 
-### Próximas iterações possíveis
+### Tentativa: expandir CSV para 19 UFs com estimativas Claude (REVERTIDA)
 
-1. **Expandir `pesquisas_uf.csv`** pra estados onde PL teve picos não
-   capturados (MT, RO, SC, RR — fontes Atlas/Paraná Pesquisas/CNT).
-   Cada UF nova esperada ajuda 1-3pp no PL MAE.
-2. **Pesquisas 2014** — atualmente CSV só tem 2018+2022. Adicionar
-   2014 pode estabilizar o sinal histórico (Aécio/Marina).
+Em 2026-05-10 expandimos `pesquisas_uf.csv` de 8 para 27 UFs (147
+entradas). Adicionei estimativas baseadas em padrão regional para
+estados sem Datafolha (CO, N, NE pequeno, SC, ES). Resultado:
+
+| Métrica | 8 UFs (Datafolha) | 27 UFs (+Claude regional) | Δ |
+| --- | --- | --- | --- |
+| MAE total | 0.0099 | 0.0115 | +16% PIOR |
+| PL MAE | 0.080 | 0.093 | +16% PIOR |
+| PT MAE | 0.009 | 0.015 | +67% PIOR |
+
+**Por quê piorou**: minhas estimativas Claude pra 2018 nos estados
+Bolsonaro-extremo (AC/SC/MT/RO/RR) tinham gap de 23-27pp vs TSE real,
+mais subestimadas que o padrão Datafolha histórico (~18-20pp). LGBM
+aprendeu uma "correção" maior que necessária e super-corrigiu em 2022.
+PT NE também piorou pelo mesmo motivo invertido.
+
+**Lição**: dados sintéticos inconsistentes com a fonte real prejudicam
+mais que ausência de dados. Estimar pesquisas regionais sem fonte
+sólida é arriscado — o LGBM aprende artefatos. Reverti para o estado
+de 8 UFs (Datafolha auditado).
+
+### Próximas iterações verdadeiras
+
+1. **Atlas Intel/Paraná Pesquisas reais** pros 19 estados sem Datafolha,
+   se conseguir obter dados publicados. Não inventar.
+2. **Pesquisas 2014** com Datafolha real onde houver. CSV atual só tem
+   2018+2022.
 3. **Atualizar valores `estimativa_claude_datafolha`** com os
    reais Datafolha — auditoria igual à que foi feita pro nacional.
 
