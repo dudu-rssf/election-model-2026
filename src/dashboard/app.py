@@ -175,6 +175,20 @@ _TAB_JS = """
 """
 
 
+CANDIDATOS: dict[str, str] = {
+    "PT":     "Lula",
+    "PL":     "Flávio Bolsonaro",
+    "MISSÃO": "Renan Santos",
+    "NOVO":   "Romeu Zema",
+    "PSD":    "Caiado",
+}
+
+
+def label_partido(sigla: str) -> str:
+    nome = CANDIDATOS.get(sigla)
+    return f"{sigla} ({nome})" if nome else sigla
+
+
 NOMES_UF: dict[str, str] = {
     "AC": "Acre", "AL": "Alagoas", "AM": "Amazonas", "AP": "Amapá",
     "BA": "Bahia", "CE": "Ceará", "DF": "Distrito Federal", "ES": "Espírito Santo",
@@ -237,9 +251,10 @@ def load_geodata():
 # ── Helpers de gráfico ────────────────────────────────────────────────────────
 def bar_chart_1t(df: pd.DataFrame, titulo: str) -> go.Figure:
     df = df.sort_values("share_pred", ascending=True).copy()
+    df["_label"] = df["sigla_partido"].map(label_partido)
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        y=df["sigla_partido"],
+        y=df["_label"],
         x=df["share_pred"],
         orientation="h",
         marker_color=[cor(p) for p in df["sigla_partido"]],
@@ -275,7 +290,7 @@ def gauge_2t(partido_a: str, share_a: float, lo_a: float, hi_a: float,
         mode="gauge+number+delta",
         value=round(share_a * 100, 1),
         number={"suffix": "%", "font": {"size": 40}},
-        title={"text": f"<b>{partido_a}</b> no 2º turno", "font": {"size": 18}},
+        title={"text": f"<b>{label_partido(partido_a)}</b> no 2º turno", "font": {"size": 18}},
         delta={"reference": 50, "valueformat": ".1f",
                "increasing": {"color": cor(partido_a)},
                "decreasing": {"color": cor(partido_b)}},
@@ -327,13 +342,13 @@ def mapa_2t(df_uf: pd.DataFrame, geo) -> go.Figure:
         zmin=0.3,
         zmax=0.7,
         colorbar=dict(
-            title=f"← {label_b} | {label_a} →",
+            title=f"← {label_partido(label_b)} | {label_partido(label_a)} →",
             tickformat=".0%",
             len=0.6,
         ),
         hovertemplate=(
             "<b>%{location}</b><br>"
-            f"{label_a}: %{{z:.1%}}<br>"
+            f"{label_partido(label_a)}: %{{z:.1%}}<br>"
             "<extra></extra>"
         ),
     ))
@@ -375,7 +390,7 @@ def mapa_1t(df_uf: pd.DataFrame, geo) -> go.Figure:
 
     hover_text = [
         f"<b>{row['sigla_uf']}</b> — {NOMES_UF.get(row['sigla_uf'], '')}<br>"
-        f"Líder 1t: {row['lider']} ({row['share_lider']:.1%})"
+        f"Líder 1t: {label_partido(row['lider'])} ({row['share_lider']:.1%})"
         for _, row in merged.iterrows()
     ]
 
@@ -389,7 +404,7 @@ def mapa_1t(df_uf: pd.DataFrame, geo) -> go.Figure:
         zmin=-0.4,
         zmax=0.4,
         colorbar=dict(
-            title="← PL | PT →",
+            title=f"← {label_partido('PL')} | {label_partido('PT')} →",
             tickformat=".0%",
             len=0.6,
             tickfont=dict(color=_TEXT),
@@ -459,16 +474,16 @@ def main() -> None:
     margem_2t = abs(pt_row["share_pred"] - pl_row["share_pred"])
 
     with row[0]:
-        st.metric(f"🥇 1t — {lider['sigla_partido']}",
+        st.metric(f"🥇 1t — {label_partido(lider['sigla_partido'])}",
                   f"{lider['share_pred']:.1%}",
                   f"IC [{lider['share_lower']:.1%} – {lider['share_upper']:.1%}]")
     with row[1]:
-        st.metric(f"🥈 1t — {segundo['sigla_partido']}",
+        st.metric(f"🥈 1t — {label_partido(segundo['sigla_partido'])}",
                   f"{segundo['share_pred']:.1%}",
                   f"IC [{segundo['share_lower']:.1%} – {segundo['share_upper']:.1%}]")
     vencedor_2t = "PT" if pt_row["share_pred"] > pl_row["share_pred"] else "PL"
     with row[2]:
-        st.metric(f"🏆 2t — {vencedor_2t} previsto",
+        st.metric(f"🏆 2t — {label_partido(vencedor_2t)} previsto",
                   f"{max(pt_row['share_pred'], pl_row['share_pred']):.1%}",
                   f"margem {margem_2t:.1%}")
     pt_ufs = int((uf_2t["vencedor"] == "PT").sum())
@@ -512,7 +527,7 @@ def main() -> None:
 
     # ── Tab 2: 2º Turno Nacional ─────────────────────────────────────────────
     with tab2t:
-        st.subheader("Previsão 2º Turno — Nacional  (PT × PL)")
+        st.subheader(f"Previsão 2º Turno — Nacional  ({label_partido('PT')} × {label_partido('PL')})")
         col_g, col_info = st.columns([2, 1])
         with col_g:
             pt_share = float(pt_row["share_pred"])
@@ -536,7 +551,7 @@ def main() -> None:
             for _, r in nac_2t.sort_values("share_pred", ascending=False).iterrows():
                 destaque = "**" if r["sigla_partido"] == vencedor_2t else ""
                 st.markdown(
-                    f"{destaque}{r['sigla_partido']}: {r['share_pred']:.2%}{destaque}  \n"
+                    f"{destaque}{label_partido(r['sigla_partido'])}: {r['share_pred']:.2%}{destaque}  \n"
                     f"IC 90%: [{r['share_lower']:.2%} – {r['share_upper']:.2%}]"
                 )
                 st.markdown("")
@@ -548,7 +563,7 @@ def main() -> None:
             st.markdown("#### Vencedor previsto por UF")
             cnt = uf_2t["vencedor"].value_counts()
             for p, n in cnt.items():
-                st.markdown(f"- **{p}**: {n} UFs")
+                st.markdown(f"- **{label_partido(p)}**: {n} UFs")
 
     # ── Tab 3: 1º Turno por UF ───────────────────────────────────────────────
     with tab_uf1:
@@ -580,7 +595,7 @@ def main() -> None:
 
     # ── Tab 4: 2º Turno por UF ───────────────────────────────────────────────
     with tab_uf2:
-        st.subheader("Previsão 2º Turno por UF  (PT × PL)")
+        st.subheader(f"Previsão 2º Turno por UF  ({label_partido('PT')} × {label_partido('PL')})")
         col_map2, col_detail2 = st.columns([3, 2])
 
         with col_map2:
@@ -605,10 +620,10 @@ def main() -> None:
             perd = "PL" if venc == "PT" else "PT"
             st.markdown(f"### {uf2_sel_lbl}")
             st.markdown(
-                f"**Vencedor previsto:** `{venc}`  \n"
-                f"{venc}: **{row_2t['share_pred_A']:.1%}** "
+                f"**Vencedor previsto:** `{label_partido(venc)}`  \n"
+                f"{label_partido(venc)}: **{row_2t['share_pred_A']:.1%}** "
                 f"(IC 90%: {row_2t['share_lower_A']:.1%} – {row_2t['share_upper_A']:.1%})  \n"
-                f"{perd}: **{row_2t['share_pred_B']:.1%}** "
+                f"{label_partido(perd)}: **{row_2t['share_pred_B']:.1%}** "
                 f"(IC 90%: {row_2t['share_lower_B']:.1%} – {row_2t['share_upper_B']:.1%})  \n"
                 f"Eleitorado: {row_2t['eleitorado_uf']:,.0f}"
             )
@@ -622,6 +637,7 @@ def main() -> None:
             display = display[["Estado", "vencedor", "share_pred_A",
                                 "share_pred_B", "eleitorado_uf"]]
             display.columns = ["Estado", "Vencedor", "PT %", "PL %", "Eleitorado"]
+            display["Vencedor"] = display["Vencedor"].map(label_partido)
             display["PT %"] = display["PT %"].map("{:.1%}".format)
             display["PL %"] = display["PL %"].map("{:.1%}".format)
             display["Eleitorado"] = display["Eleitorado"].map("{:,.0f}".format)
