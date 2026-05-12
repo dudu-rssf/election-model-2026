@@ -1,2 +1,4 @@
 libgdal-dev
 gdal-bin
+libxslt1-dev
+libxml2-dev
