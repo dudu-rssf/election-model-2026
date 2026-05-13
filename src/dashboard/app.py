@@ -424,7 +424,7 @@ def main() -> None:
     uf_2t  = load_uf_2t()
 
     # ── Header com headline numbers ──────────────────────────────────────────
-    st.title("2026 Presidential Elections — Model Forecast")
+    st.title("2026 Presidential Elections | Model Forecast")
     st.caption("Based on TSE historical data + May/2026 polls.")
 
     row = st.columns(4)
