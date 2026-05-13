@@ -341,6 +341,12 @@ def main() -> None:
 
         with col_a:
             st.markdown("#### 2nd Round Margin by State (PT − PL)")
+            st.markdown(
+                "<small style='color:#6B7280'>Projected vote margin per state in the 2nd round. "
+                "Positive values mean PT leads; negative mean PL leads. "
+                "The further the bar extends from center, the more decisive the projected win.</small>",
+                unsafe_allow_html=True,
+            )
             df_m = uf_2t.copy()
             df_m["margin"] = df_m["share_pred_A"] - df_m["share_pred_B"]
             df_m = df_m.sort_values("margin")
@@ -373,6 +379,12 @@ def main() -> None:
 
         with col_b:
             st.markdown("#### Forecast Uncertainty by State (90% CI width)")
+            st.markdown(
+                "<small style='color:#6B7280'>Width of the 90% confidence interval for PT's 2nd round share per state. "
+                "Wider bars signal higher model uncertainty — driven by sparse local data or high sensitivity to vote transfer assumptions. "
+                "Color indicates the projected winner.</small>",
+                unsafe_allow_html=True,
+            )
             df_ci = uf_2t.copy()
             df_ci["ci_width"] = df_ci["share_upper_A"] - df_ci["share_lower_A"]
             df_ci = df_ci.sort_values("ci_width", ascending=True)
@@ -399,6 +411,13 @@ def main() -> None:
         st.divider()
 
         st.markdown("#### Round 1: PT vs PL vote share by state")
+        st.markdown(
+            "<small style='color:#6B7280'>Each bubble is a state. "
+            "The vertical axis shows PT's Round 1 share; the horizontal axis shows PL's. "
+            "States above the diagonal favor PT; below favor PL. "
+            "Bubble size is proportional to the state electorate — larger bubbles carry more weight in the national result.</small>",
+            unsafe_allow_html=True,
+        )
         pt_r1 = (uf_1t[uf_1t["sigla_partido"] == "PT"]
                  [["sigla_uf", "share_pred", "eleitorado_uf"]]
                  .rename(columns={"share_pred": "pt"}))
@@ -455,6 +474,12 @@ def main() -> None:
 
         # ── Swing States ─────────────────────────────────────────────────────
         st.markdown("#### Swing States — Most Competitive (margin < 10pp)")
+        st.markdown(
+            "<small style='color:#6B7280'>Only states where the projected 2nd round margin is under 10pp — "
+            "these are the most likely to flip the final outcome. "
+            "States inside the highlighted band (±5pp) are statistical toss-ups where model uncertainty spans both candidates.</small>",
+            unsafe_allow_html=True,
+        )
         df_swing = uf_2t.copy()
         df_swing["margin"] = df_swing["share_pred_A"] - df_swing["share_pred_B"]
         df_swing["abs_margin"] = df_swing["margin"].abs()
@@ -524,6 +549,12 @@ def main() -> None:
 
         with col_reg:
             st.markdown("#### 2nd Round Share by Region (electorate-weighted)")
+            st.markdown(
+                "<small style='color:#6B7280'>State-level 2nd round projections aggregated into Brazil's 5 geographic regions, "
+                "weighted by electorate size. Reveals the structural regional base of each candidate — "
+                "PT's dominance in the Northeast vs PL's strength in the South and Center-West.</small>",
+                unsafe_allow_html=True,
+            )
             fig_reg = go.Figure()
             fig_reg.add_trace(go.Bar(
                 name="PT (Lula)",
@@ -556,6 +587,11 @@ def main() -> None:
 
         with col_eleit:
             st.markdown("#### Electorate Distribution by 2nd Round Winner")
+            st.markdown(
+                "<small style='color:#6B7280'>Share of the total Brazilian electorate living in states projected to be won by each candidate. "
+                "Winning more states is not enough — this chart shows the true electoral weight behind each candidate's map.</small>",
+                unsafe_allow_html=True,
+            )
             eleit_pt = uf_2t.loc[uf_2t["vencedor"] == "PT", "eleitorado_uf"].sum()
             eleit_pl = uf_2t.loc[uf_2t["vencedor"] == "PL", "eleitorado_uf"].sum()
             total = eleit_pt + eleit_pl
@@ -589,6 +625,12 @@ def main() -> None:
 
         # ── R1 → R2 shift ────────────────────────────────────────────────────
         st.markdown("#### Round 1 → Round 2 Vote Transfer by State")
+        st.markdown(
+            "<small style='color:#6B7280'>Difference between each candidate's projected 2nd round share and their 1st round share, per state. "
+            "Positive bars mean the candidate gained votes from eliminated parties; negative means they lost relative share. "
+            "PT benefits from left-leaning transfers (PDT, MDB, UP); PL from right-leaning ones (NOVO, UNIÃO, DC).</small>",
+            unsafe_allow_html=True,
+        )
         pt_r1_s = (uf_1t[uf_1t["sigla_partido"] == "PT"]
                    [["sigla_uf", "share_pred"]].rename(columns={"share_pred": "pt_r1"}))
         pl_r1_s = (uf_1t[uf_1t["sigla_partido"] == "PL"]
