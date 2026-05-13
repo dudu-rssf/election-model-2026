@@ -735,6 +735,192 @@ def main() -> None:
             "Above the diagonal = PT leads in that state; below = PL (Flávio) leads."
         )
 
+        st.divider()
+
+        # ── Swing States ─────────────────────────────────────────────────────
+        st.markdown("#### Swing States — Most Competitive (margin < 10pp)")
+        df_swing = uf_2t.copy()
+        df_swing["margin"] = df_swing["share_pred_A"] - df_swing["share_pred_B"]
+        df_swing["abs_margin"] = df_swing["margin"].abs()
+        df_swing = df_swing[df_swing["abs_margin"] < 0.10].sort_values("abs_margin")
+        if df_swing.empty:
+            st.info("No states within 10pp margin.")
+        else:
+            fig_sw = go.Figure(go.Bar(
+                y=df_swing["sigla_uf"],
+                x=df_swing["margin"],
+                orientation="h",
+                marker_color=[cor("PT") if m > 0 else cor("PL") for m in df_swing["margin"]],
+                text=[f"{m:+.1%}" for m in df_swing["margin"]],
+                textposition="outside",
+                cliponaxis=False,
+                customdata=df_swing[["share_pred_A", "share_pred_B", "eleitorado_uf"]].values,
+                hovertemplate=(
+                    "<b>%{y}</b><br>"
+                    f"{label_partido('PT')}: %{{customdata[0]:.1%}}<br>"
+                    f"{label_partido('PL')}: %{{customdata[1]:.1%}}<br>"
+                    "Electorate: %{customdata[2]:,.0f}<extra></extra>"
+                ),
+            ))
+            fig_sw.add_vline(x=0, line_color=_MUTED, line_width=1)
+            fig_sw.add_vrect(x0=-0.05, x1=0.05, fillcolor=_GOLD, opacity=0.06,
+                             line_width=0, annotation_text="toss-up zone",
+                             annotation_position="top left",
+                             annotation_font=dict(color=_GOLD, size=9))
+            fig_sw.update_layout(
+                xaxis=dict(tickformat="+.0%", color=_MUTED, gridcolor=_BORDER,
+                           range=[-0.12, 0.12]),
+                yaxis=dict(tickfont=dict(size=11, color=_TEXT), showgrid=False),
+                margin=dict(l=40, r=70, t=20, b=20),
+                height=max(260, len(df_swing) * 38),
+                plot_bgcolor=_BG2, paper_bgcolor=_BG, font=dict(color=_TEXT),
+            )
+            st.plotly_chart(fig_sw, use_container_width=True)
+            st.caption(f"{len(df_swing)} states within 10pp — highlighted band = within 5pp (toss-up).")
+
+        st.divider()
+
+        # ── Breakdown por região ──────────────────────────────────────────────
+        REGIOES = {
+            "Norte":        ["AC", "AP", "AM", "PA", "RO", "RR", "TO"],
+            "Nordeste":     ["AL", "BA", "CE", "MA", "PB", "PE", "PI", "RN", "SE"],
+            "Centro-Oeste": ["DF", "GO", "MS", "MT"],
+            "Sudeste":      ["ES", "MG", "RJ", "SP"],
+            "Sul":          ["PR", "RS", "SC"],
+        }
+        uf2_reg = uf_2t.copy()
+        uf2_reg["regiao"] = uf2_reg["sigla_uf"].map(
+            {uf: r for r, ufs in REGIOES.items() for uf in ufs}
+        )
+        reg_agg = (
+            uf2_reg.groupby("regiao")
+            .apply(lambda g: pd.Series({
+                "pt_share": (g["share_pred_A"] * g["eleitorado_uf"]).sum() / g["eleitorado_uf"].sum(),
+                "pl_share": (g["share_pred_B"] * g["eleitorado_uf"]).sum() / g["eleitorado_uf"].sum(),
+                "eleitorado": g["eleitorado_uf"].sum(),
+            }), include_groups=False)
+            .reset_index()
+        )
+        reg_order = ["Norte", "Nordeste", "Centro-Oeste", "Sudeste", "Sul"]
+        reg_agg["regiao"] = pd.Categorical(reg_agg["regiao"], categories=reg_order, ordered=True)
+        reg_agg = reg_agg.sort_values("regiao")
+
+        col_reg, col_eleit = st.columns(2)
+
+        with col_reg:
+            st.markdown("#### 2nd Round Share by Region (electorate-weighted)")
+            fig_reg = go.Figure()
+            fig_reg.add_trace(go.Bar(
+                name=label_partido("PT"),
+                x=reg_agg["regiao"],
+                y=reg_agg["pt_share"],
+                marker_color=cor("PT"),
+                text=[f"{v:.1%}" for v in reg_agg["pt_share"]],
+                textposition="outside",
+            ))
+            fig_reg.add_trace(go.Bar(
+                name=label_partido("PL"),
+                x=reg_agg["regiao"],
+                y=reg_agg["pl_share"],
+                marker_color=cor("PL"),
+                text=[f"{v:.1%}" for v in reg_agg["pl_share"]],
+                textposition="outside",
+            ))
+            fig_reg.add_hline(y=0.5, line_dash="dash", line_color=_MUTED, line_width=1)
+            fig_reg.update_layout(
+                barmode="group",
+                xaxis=dict(color=_MUTED, gridcolor=_BORDER),
+                yaxis=dict(tickformat=".0%", color=_MUTED, gridcolor=_BORDER,
+                           range=[0, 0.80]),
+                legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color=_TEXT)),
+                margin=dict(l=40, r=20, t=10, b=40),
+                height=380,
+                plot_bgcolor=_BG2, paper_bgcolor=_BG, font=dict(color=_TEXT),
+            )
+            st.plotly_chart(fig_reg, use_container_width=True)
+            st.caption("Shares are weighted by state electorate within each region.")
+
+        with col_eleit:
+            st.markdown("#### Electorate Distribution by 2nd Round Winner")
+            eleit_pt = uf_2t.loc[uf_2t["vencedor"] == "PT", "eleitorado_uf"].sum()
+            eleit_pl = uf_2t.loc[uf_2t["vencedor"] == "PL", "eleitorado_uf"].sum()
+            total = eleit_pt + eleit_pl
+            fig_donut = go.Figure(go.Pie(
+                labels=[label_partido("PT"), label_partido("PL")],
+                values=[eleit_pt, eleit_pl],
+                hole=0.55,
+                marker_colors=[cor("PT"), cor("PL")],
+                textinfo="label+percent",
+                textfont=dict(size=12, color=_TEXT),
+                hovertemplate="<b>%{label}</b><br>%{value:,.0f} voters<br>%{percent}<extra></extra>",
+            ))
+            fig_donut.add_annotation(
+                text=f"{total/1e6:.1f}M<br>voters",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=13, color=_MUTED),
+            )
+            fig_donut.update_layout(
+                showlegend=False,
+                margin=dict(l=20, r=20, t=10, b=10),
+                height=380,
+                paper_bgcolor=_BG, font=dict(color=_TEXT),
+            )
+            st.plotly_chart(fig_donut, use_container_width=True)
+            st.caption(
+                f"{label_partido('PT')} leads in states with {eleit_pt/total:.1%} of the electorate · "
+                f"{label_partido('PL')} leads in {eleit_pl/total:.1%}."
+            )
+
+        st.divider()
+
+        # ── R1 → R2 shift ────────────────────────────────────────────────────
+        st.markdown("#### Round 1 → Round 2 Vote Transfer by State")
+        pt_r1_s = (uf_1t[uf_1t["sigla_partido"] == "PT"]
+                   [["sigla_uf", "share_pred"]].rename(columns={"share_pred": "pt_r1"}))
+        pl_r1_s = (uf_1t[uf_1t["sigla_partido"] == "PL"]
+                   [["sigla_uf", "share_pred"]].rename(columns={"share_pred": "pl_r1"}))
+        df_shift = (uf_2t[["sigla_uf", "share_pred_A", "share_pred_B", "vencedor"]]
+                    .merge(pt_r1_s, on="sigla_uf").merge(pl_r1_s, on="sigla_uf"))
+        df_shift["pt_gain"] = df_shift["share_pred_A"] - df_shift["pt_r1"]
+        df_shift["pl_gain"] = df_shift["share_pred_B"] - df_shift["pl_r1"]
+        df_shift = df_shift.sort_values("pt_gain")
+
+        fig_shift = go.Figure()
+        fig_shift.add_trace(go.Bar(
+            name=f"{label_partido('PT')} R1→R2 gain",
+            x=df_shift["sigla_uf"],
+            y=df_shift["pt_gain"],
+            marker_color=cor("PT"),
+            text=[f"{v:+.1%}" for v in df_shift["pt_gain"]],
+            textposition="outside",
+            cliponaxis=False,
+        ))
+        fig_shift.add_trace(go.Bar(
+            name=f"{label_partido('PL')} R1→R2 gain",
+            x=df_shift["sigla_uf"],
+            y=df_shift["pl_gain"],
+            marker_color=cor("PL"),
+            text=[f"{v:+.1%}" for v in df_shift["pl_gain"]],
+            textposition="outside",
+            cliponaxis=False,
+        ))
+        fig_shift.add_hline(y=0, line_color=_MUTED, line_width=1)
+        fig_shift.update_layout(
+            barmode="group",
+            xaxis=dict(color=_MUTED, gridcolor=_BORDER, tickangle=-45),
+            yaxis=dict(tickformat="+.0%", color=_MUTED, gridcolor=_BORDER),
+            legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color=_TEXT),
+                        orientation="h", y=1.05),
+            margin=dict(l=40, r=20, t=40, b=60),
+            height=420,
+            plot_bgcolor=_BG2, paper_bgcolor=_BG, font=dict(color=_TEXT),
+        )
+        st.plotly_chart(fig_shift, use_container_width=True)
+        st.caption(
+            "Positive = candidate gained share from vote transfer; negative = lost share. "
+            "PT typically gains from left-leaning party transfers; PL from right-leaning."
+        )
+
     # ── Tab 6: Tabelas raw ───────────────────────────────────────────────────
     with tab_dados:
         st.subheader("Raw Data")
