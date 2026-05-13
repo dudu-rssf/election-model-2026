@@ -1,4 +1,4 @@
-"""Dashboard Streamlit — Modelo Eleitoral Presidencial 2026."""
+"""Streamlit Dashboard — 2026 Presidential Electoral Model."""
 from __future__ import annotations
 
 import sys
@@ -219,27 +219,27 @@ def hex_rgba(hex_color: str, alpha: float) -> str:
 
 
 # ── Carregamento com cache ────────────────────────────────────────────────────
-@st.cache_data(show_spinner="Carregando previsão 1º turno nacional…")
+@st.cache_data(show_spinner="Loading 1st round national forecast…")
 def load_nac_1t() -> pd.DataFrame:
     return pd.read_parquet(PATHS["data_processed"] / "previsao_nacional_2026.parquet")
 
 
-@st.cache_data(show_spinner="Carregando previsão 2º turno nacional…")
+@st.cache_data(show_spinner="Loading 2nd round national forecast…")
 def load_nac_2t() -> pd.DataFrame:
     return pd.read_parquet(PATHS["data_processed"] / "previsao_2t_nacional_2026.parquet")
 
 
-@st.cache_data(show_spinner="Carregando previsão 1º turno por UF…")
+@st.cache_data(show_spinner="Loading 1st round forecast by state…")
 def load_uf_1t() -> pd.DataFrame:
     return pd.read_parquet(PATHS["data_processed"] / "previsao_uf_2026.parquet")
 
 
-@st.cache_data(show_spinner="Carregando previsão 2º turno por UF…")
+@st.cache_data(show_spinner="Loading 2nd round forecast by state…")
 def load_uf_2t() -> pd.DataFrame:
     return pd.read_parquet(PATHS["data_processed"] / "previsao_2t_2026.parquet")
 
 
-@st.cache_data(show_spinner="Carregando mapa do Brasil…", ttl=86400)
+@st.cache_data(show_spinner="Loading Brazil map…", ttl=86400)
 def load_geodata():
     import geobr
     states = geobr.read_state(year=2020)
@@ -290,7 +290,7 @@ def gauge_2t(partido_a: str, share_a: float, lo_a: float, hi_a: float,
         mode="gauge+number+delta",
         value=round(share_a * 100, 1),
         number={"suffix": "%", "font": {"size": 40}},
-        title={"text": f"<b>{label_partido(partido_a)}</b> no 2º turno", "font": {"size": 18}},
+        title={"text": f"<b>{label_partido(partido_a)}</b> in the 2nd round", "font": {"size": 18}},
         delta={"reference": 50, "valueformat": ".1f",
                "increasing": {"color": cor(partido_a)},
                "decreasing": {"color": cor(partido_b)}},
@@ -307,8 +307,7 @@ def gauge_2t(partido_a: str, share_a: float, lo_a: float, hi_a: float,
                           "thickness": 0.85, "value": 50},
         },
     ))
-    # IC como anotação
-    ic_txt = f"IC 90%: [{lo_a:.1%} – {hi_a:.1%}]"
+    ic_txt = f"90% CI: [{lo_a:.1%} – {hi_a:.1%}]"
     fig.add_annotation(text=ic_txt, x=0.5, y=-0.08, xref="paper", yref="paper",
                        showarrow=False, font=dict(size=12, color=_MUTED))
     fig.update_layout(height=280, margin=dict(t=40, b=60, l=20, r=20),
@@ -319,80 +318,11 @@ def gauge_2t(partido_a: str, share_a: float, lo_a: float, hi_a: float,
 def mapa_2t(df_uf: pd.DataFrame, geo) -> go.Figure:
     import json
 
-    merged = geo.merge(df_uf, on="sigla_uf", how="left")
+    df = df_uf.copy()
+    df["spread"] = df["share_pred_A"] - df["share_pred_B"]  # PT − PL
+
+    merged = geo.merge(df, on="sigla_uf", how="left")
     geojson = json.loads(merged.to_json())
-
-    # Encode vencedor como número pra colorscale
-    partido_a = df_uf.loc[df_uf["share_pred_A"].idxmax(), "sigla_uf"]  # noqa: F841
-    venc_list = df_uf["vencedor"].unique().tolist()
-    if "PT" in venc_list and "PL" in venc_list:
-        cor_a, cor_b = "#CC0000", "#1A56DB"
-        label_a, label_b = "PT", "PL"
-    else:
-        cor_a, cor_b = cor(venc_list[0]), cor(venc_list[-1])
-        label_a, label_b = venc_list[0], venc_list[-1]
-
-    fig = go.Figure(go.Choropleth(
-        geojson=geojson,
-        locations=df_uf["sigla_uf"],
-        z=df_uf["share_pred_A"],
-        featureidkey="properties.sigla_uf",
-        colorscale=[[0, cor_b], [0.5, "#1e3a5f"], [1, cor_a]],
-        zmid=0.5,
-        zmin=0.3,
-        zmax=0.7,
-        colorbar=dict(
-            title=f"← {label_partido(label_b)} | {label_partido(label_a)} →",
-            tickformat=".0%",
-            len=0.6,
-        ),
-        hovertemplate=(
-            "<b>%{location}</b><br>"
-            f"{label_partido(label_a)}: %{{z:.1%}}<br>"
-            "<extra></extra>"
-        ),
-    ))
-    fig.update_geos(
-        fitbounds="locations",
-        visible=False,
-        bgcolor=_BG,
-    )
-    fig.update_layout(
-        margin=dict(l=0, r=0, t=8, b=0),
-        height=480,
-        paper_bgcolor=_BG,
-        font=dict(color=_TEXT),
-    )
-    return fig
-
-
-def mapa_1t(df_uf: pd.DataFrame, geo) -> go.Figure:
-    """Mapa 1º turno: spread PT − PL por UF (divergente vermelho/azul)."""
-    import json
-
-    # Pivot: share por partido por UF
-    pivot = df_uf.pivot_table(index="sigla_uf", columns="sigla_partido",
-                              values="share_pred", aggfunc="first").fillna(0)
-    pt_share = pivot.get("PT", pd.Series(0, index=pivot.index))
-    pl_share = pivot.get("PL", pd.Series(0, index=pivot.index))
-    spread = (pt_share - pl_share).reset_index()
-    spread.columns = ["sigla_uf", "spread"]
-
-    lider = df_uf.loc[df_uf.groupby("sigla_uf")["share_pred"].idxmax(),
-                      ["sigla_uf", "sigla_partido", "share_pred"]].set_index("sigla_uf")
-
-    merged = geo.merge(spread, on="sigla_uf", how="left")
-    merged = merged.merge(
-        lider.rename(columns={"sigla_partido": "lider", "share_pred": "share_lider"}),
-        on="sigla_uf", how="left",
-    )
-    geojson = json.loads(merged.to_json())
-
-    hover_text = [
-        f"<b>{row['sigla_uf']}</b> — {NOMES_UF.get(row['sigla_uf'], '')}<br>"
-        f"Líder 1t: {label_partido(row['lider'])} ({row['share_lider']:.1%})"
-        for _, row in merged.iterrows()
-    ]
 
     fig = go.Figure(go.Choropleth(
         geojson=geojson,
@@ -405,13 +335,64 @@ def mapa_1t(df_uf: pd.DataFrame, geo) -> go.Figure:
         zmax=0.4,
         colorbar=dict(
             title=f"← {label_partido('PL')} | {label_partido('PT')} →",
-            tickformat=".0%",
+            showticklabels=False,
             len=0.6,
             tickfont=dict(color=_TEXT),
             titlefont=dict(color=_MUTED),
         ),
-        text=hover_text,
-        hovertemplate="%{text}<extra></extra>",
+        customdata=merged[["share_pred_A", "share_pred_B"]].values,
+        hovertemplate=(
+            "<b>%{location}</b><br>"
+            f"{label_partido('PT')}: %{{customdata[0]:.1%}}<br>"
+            f"{label_partido('PL')}: %{{customdata[1]:.1%}}<br>"
+            "<extra></extra>"
+        ),
+    ))
+    fig.update_geos(fitbounds="locations", visible=False, bgcolor=_BG)
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=8, b=0),
+        height=480,
+        paper_bgcolor=_BG,
+        font=dict(color=_TEXT),
+    )
+    return fig
+
+
+def mapa_1t(df_uf: pd.DataFrame, geo) -> go.Figure:
+    import json
+
+    pt = df_uf[df_uf["sigla_partido"] == "PT"].set_index("sigla_uf")["share_pred"]
+    pl = df_uf[df_uf["sigla_partido"] == "PL"].set_index("sigla_uf")["share_pred"]
+    spread = (pt - pl).rename("spread").reset_index()
+
+    merged = geo.merge(spread, on="sigla_uf", how="left")
+    merged = merged.merge(pt.rename("pt").reset_index(), on="sigla_uf", how="left")
+    merged = merged.merge(pl.rename("pl").reset_index(), on="sigla_uf", how="left")
+    geojson = json.loads(merged.to_json())
+
+    fig = go.Figure(go.Choropleth(
+        geojson=geojson,
+        locations=merged["sigla_uf"],
+        z=merged["spread"],
+        featureidkey="properties.sigla_uf",
+        colorscale=[[0, "#2e86c1"], [0.5, "#1e3a5f"], [1, "#c0392b"]],
+        zmid=0,
+        zmin=-0.4,
+        zmax=0.4,
+        colorbar=dict(
+            title=f"← {label_partido('PL')} | {label_partido('PT')} →",
+            showticklabels=False,
+            len=0.6,
+            tickfont=dict(color=_TEXT),
+            titlefont=dict(color=_MUTED),
+        ),
+        customdata=merged[["pt", "pl"]].values,
+        hovertemplate=(
+            "<b>%{location}</b><br>"
+            f"{label_partido('PT')}: %{{customdata[0]:.1%}}<br>"
+            f"{label_partido('PL')}: %{{customdata[1]:.1%}}<br>"
+            "<extra></extra>"
+        ),
     ))
     fig.update_geos(fitbounds="locations", visible=False, bgcolor=_BG)
     fig.update_layout(
@@ -426,7 +407,7 @@ def mapa_1t(df_uf: pd.DataFrame, geo) -> go.Figure:
 # ── Layout principal ──────────────────────────────────────────────────────────
 def main() -> None:
     st.set_page_config(
-        page_title="Modelo Eleitoral 2026",
+        page_title="2026 Electoral Model",
         page_icon="🗳️",
         layout="wide",
     )
@@ -436,24 +417,24 @@ def main() -> None:
 
     # ── Sidebar ──────────────────────────────────────────────────────────────
     with st.sidebar:
-        st.title("🗳️ Modelo 2026")
-        st.caption(f"Modo: **{MODE.upper()}** · Python {sys.version.split()[0]}")
+        st.title("🗳️ Model 2026")
+        st.caption(f"Mode: **{MODE.upper()}** · Python {sys.version.split()[0]}")
         st.markdown(
-            "Previsão bottom-up: município → UF → nacional.  \n"
-            "**Modelo:** LightGBM + calibração isotônica + Mondrian conformal.  \n"
-            "**Snapshot de pesquisa:** mai/2026."
+            "Bottom-up forecast: municipality → state → national.  \n"
+            "**Model:** LightGBM + isotonic calibration + Mondrian conformal.  \n"
+            "**Poll snapshot:** May/2026."
         )
         st.divider()
         st.markdown(
-            "**Caveats principais**\n"
-            "- Pesquisa de mai/2026 (~5 meses antes). Re-rodar pré-1t (set/2026).\n"
-            "- PSD (Caiado ~5%) e MISSÃO (~2.7%) fora do universo do modelo.\n"
-            "- PT pode estar subestimado em ~5pp (padrão em 2022).\n"
-            "- Cobertura IC nacional = 63.6%; UF = 77.8%.\n"
-            "- 2º turno usa matriz de transferência qualitativa, não treinada."
+            "**Key caveats**\n"
+            "- May/2026 polls (~5 months before). Re-run before 1st round (Sep/2026).\n"
+            "- PSD (Caiado ~5%) and MISSÃO (~2.7%) outside model universe.\n"
+            "- PT may be underestimated by ~5pp (historical pattern in 2022).\n"
+            "- National CI coverage = 63.6%; state = 77.8%.\n"
+            "- 2nd round uses qualitative transfer matrix, not trained."
         )
         st.divider()
-        st.caption("Intervalos = IC 90% (Mondrian conformal por bin)")
+        st.caption("Intervals = 90% CI (Mondrian conformal by bin)")
 
     # ── Carrega dados ────────────────────────────────────────────────────────
     nac_1t = load_nac_1t()
@@ -462,8 +443,8 @@ def main() -> None:
     uf_2t  = load_uf_2t()
 
     # ── Header com headline numbers ──────────────────────────────────────────
-    st.title("Eleições Presidenciais 2026 — Previsão do Modelo")
-    st.caption("Baseado em dados históricos TSE + pesquisas mai/2026. Veja caveats na barra lateral.")
+    st.title("2026 Presidential Elections — Model Forecast")
+    st.caption("Based on TSE historical data + May/2026 polls. See caveats in the sidebar.")
 
     row = st.columns(4)
     nac_sorted = nac_1t.sort_values("share_pred", ascending=False).reset_index(drop=True)
@@ -474,23 +455,23 @@ def main() -> None:
     margem_2t = abs(pt_row["share_pred"] - pl_row["share_pred"])
 
     with row[0]:
-        st.metric(f"🥇 1t — {label_partido(lider['sigla_partido'])}",
+        st.metric(f"🥇 R1 — {label_partido(lider['sigla_partido'])}",
                   f"{lider['share_pred']:.1%}",
-                  f"IC [{lider['share_lower']:.1%} – {lider['share_upper']:.1%}]")
+                  f"CI [{lider['share_lower']:.1%} – {lider['share_upper']:.1%}]")
     with row[1]:
-        st.metric(f"🥈 1t — {label_partido(segundo['sigla_partido'])}",
+        st.metric(f"🥈 R1 — {label_partido(segundo['sigla_partido'])}",
                   f"{segundo['share_pred']:.1%}",
-                  f"IC [{segundo['share_lower']:.1%} – {segundo['share_upper']:.1%}]")
+                  f"CI [{segundo['share_lower']:.1%} – {segundo['share_upper']:.1%}]")
     vencedor_2t = "PT" if pt_row["share_pred"] > pl_row["share_pred"] else "PL"
     with row[2]:
-        st.metric(f"🏆 2t — {label_partido(vencedor_2t)} previsto",
+        st.metric(f"🏆 R2 — {label_partido(vencedor_2t)} projected",
                   f"{max(pt_row['share_pred'], pl_row['share_pred']):.1%}",
-                  f"margem {margem_2t:.1%}")
+                  f"margin {margem_2t:.1%}")
     pt_ufs = int((uf_2t["vencedor"] == "PT").sum())
     pl_ufs = int((uf_2t["vencedor"] == "PL").sum())
     with row[3]:
-        st.metric("🗺️ UFs 2t (PT × PL)", f"{pt_ufs} × {pl_ufs}",
-                  f"eleitorado PT: "
+        st.metric("🗺️ States R2 (PT × PL)", f"{pt_ufs} × {pl_ufs}",
+                  f"PT electorate: "
                   f"{uf_2t.loc[uf_2t['vencedor']=='PT','eleitorado_uf'].sum()/uf_2t['eleitorado_uf'].sum():.1%}")
 
     st.divider()
@@ -504,30 +485,31 @@ def main() -> None:
         _geo_ok = False
 
     # ── Tabs ─────────────────────────────────────────────────────────────────
-    tab1t, tab2t, tab_uf1, tab_uf2, tab_dados = st.tabs([
-        "1º Turno Nacional",
-        "2º Turno Nacional",
-        "1º Turno por UF",
-        "2º Turno por UF",
-        "Tabelas",
+    tab1t, tab2t, tab_uf1, tab_uf2, tab_analysis, tab_dados = st.tabs([
+        "National Round 1",
+        "National Round 2",
+        "Round 1 by State",
+        "Round 2 by State",
+        "Analysis",
+        "Tables",
     ])
 
     # ── Tab 1: 1º Turno Nacional ─────────────────────────────────────────────
     with tab1t:
-        st.subheader("Previsão 1º Turno — Nacional")
+        st.subheader("1st Round Forecast — National")
         st.plotly_chart(
-            bar_chart_1t(nac_1t, "Share de votos por partido — Brasil (IC 90%)"),
+            bar_chart_1t(nac_1t, "Vote share by party — Brazil (90% CI)"),
             use_container_width=True,
         )
         soma = nac_1t["share_pred"].sum()
         if abs(soma - 1.0) > 0.02:
-            st.warning(f"Soma dos shares = {soma:.3f} (fora de ±2%). Interprete como relativo.")
+            st.warning(f"Sum of shares = {soma:.3f} (outside ±2%). Interpret as relative.")
         else:
-            st.caption(f"Soma dos shares: {soma:.4f} ✓")
+            st.caption(f"Sum of shares: {soma:.4f} ✓")
 
     # ── Tab 2: 2º Turno Nacional ─────────────────────────────────────────────
     with tab2t:
-        st.subheader(f"Previsão 2º Turno — Nacional  ({label_partido('PT')} × {label_partido('PL')})")
+        st.subheader(f"2nd Round Forecast — National  ({label_partido('PT')} × {label_partido('PL')})")
         col_g, col_info = st.columns([2, 1])
         with col_g:
             pt_share = float(pt_row["share_pred"])
@@ -547,70 +529,69 @@ def main() -> None:
                 use_container_width=True,
             )
         with col_info:
-            st.markdown("### Resultados")
+            st.markdown("### Results")
             for _, r in nac_2t.sort_values("share_pred", ascending=False).iterrows():
                 destaque = "**" if r["sigla_partido"] == vencedor_2t else ""
                 st.markdown(
                     f"{destaque}{label_partido(r['sigla_partido'])}: {r['share_pred']:.2%}{destaque}  \n"
-                    f"IC 90%: [{r['share_lower']:.2%} – {r['share_upper']:.2%}]"
+                    f"90% CI: [{r['share_lower']:.2%} – {r['share_upper']:.2%}]"
                 )
                 st.markdown("")
             st.info(
-                "Os ICs se **sobrepõem**: a margem de "
-                f"{margem_2t:.1%} está dentro da incerteza do modelo.",
+                "The CIs **overlap**: the margin of "
+                f"{margem_2t:.1%} is within the model's uncertainty.",
                 icon="ℹ️",
             )
-            st.markdown("#### Vencedor previsto por UF")
+            st.markdown("#### Projected winner by state")
             cnt = uf_2t["vencedor"].value_counts()
             for p, n in cnt.items():
-                st.markdown(f"- **{label_partido(p)}**: {n} UFs")
+                st.markdown(f"- **{label_partido(p)}**: {n} states")
 
     # ── Tab 3: 1º Turno por UF ───────────────────────────────────────────────
     with tab_uf1:
-        st.subheader("Previsão 1º Turno por UF")
+        st.subheader("1st Round Forecast by State")
         ufs_sorted = sorted(uf_1t["sigla_uf"].unique().tolist())
         uf_options = [label_uf(u) for u in ufs_sorted]
         default_idx = ufs_sorted.index("SP") if "SP" in ufs_sorted else 0
 
         col_map1, col_bar1 = st.columns([2, 3])
         with col_bar1:
-            uf_sel_lbl = st.selectbox("Selecione o estado", uf_options, index=default_idx,
+            uf_sel_lbl = st.selectbox("Select a state", uf_options, index=default_idx,
                                       key="sel_uf1t")
             uf_sel = sigla_from_label(uf_sel_lbl)
             df_uf_sel = uf_1t[uf_1t["sigla_uf"] == uf_sel].copy()
             eleitorado = df_uf_sel["eleitorado_uf"].iloc[0]
             n_mun = int(df_uf_sel["n_municipios_uf"].iloc[0])
-            st.caption(f"{uf_sel_lbl} — {n_mun} municípios · {eleitorado:,.0f} eleitores")
+            st.caption(f"{uf_sel_lbl} — {n_mun} municipalities · {eleitorado:,.0f} voters")
             st.plotly_chart(
-                bar_chart_1t(df_uf_sel, f"Share 1t — {uf_sel_lbl} (IC 90%)"),
+                bar_chart_1t(df_uf_sel, f"Round 1 share — {uf_sel_lbl} (90% CI)"),
                 use_container_width=True,
             )
         with col_map1:
             if _geo_ok:
                 st.plotly_chart(mapa_1t(uf_1t, _geo), use_container_width=True,
                                 config={"responsive": True})
-                st.caption("Vermelho = PT lidera · Azul = PL lidera")
+                st.caption("Red = PT leads · Blue = PL leads")
             else:
-                st.warning(f"Mapa indisponível: {_geo_err}")
+                st.warning(f"Map unavailable: {_geo_err}")
 
     # ── Tab 4: 2º Turno por UF ───────────────────────────────────────────────
     with tab_uf2:
-        st.subheader(f"Previsão 2º Turno por UF  ({label_partido('PT')} × {label_partido('PL')})")
+        st.subheader(f"2nd Round Forecast by State  ({label_partido('PT')} × {label_partido('PL')})")
         col_map2, col_detail2 = st.columns([3, 2])
 
         with col_map2:
             if _geo_ok:
                 st.plotly_chart(mapa_2t(uf_2t, _geo), use_container_width=True,
                                 config={"responsive": True})
-                st.caption("Vermelho = PT lidera · Azul = PL lidera")
+                st.caption("Red = PT leads · Blue = PL leads")
             else:
-                st.warning(f"Mapa não disponível: {_geo_err}")
+                st.warning(f"Map unavailable: {_geo_err}")
 
         with col_detail2:
-            # Selectbox estado
             ufs_2t = sorted(uf_2t["sigla_uf"].unique().tolist())
             uf2_options = [label_uf(u) for u in ufs_2t]
-            uf2_sel_lbl = st.selectbox("Detalhe por estado", uf2_options,
+            uf2_sel_lbl = st.selectbox("State details", uf2_options,
                                        index=ufs_2t.index("SP") if "SP" in ufs_2t else 0,
                                        key="sel_uf2t")
             uf2_sel = sigla_from_label(uf2_sel_lbl)
@@ -620,12 +601,12 @@ def main() -> None:
             perd = "PL" if venc == "PT" else "PT"
             st.markdown(f"### {uf2_sel_lbl}")
             st.markdown(
-                f"**Vencedor previsto:** `{label_partido(venc)}`  \n"
+                f"**Projected winner:** `{label_partido(venc)}`  \n"
                 f"{label_partido(venc)}: **{row_2t['share_pred_A']:.1%}** "
-                f"(IC 90%: {row_2t['share_lower_A']:.1%} – {row_2t['share_upper_A']:.1%})  \n"
+                f"(90% CI: {row_2t['share_lower_A']:.1%} – {row_2t['share_upper_A']:.1%})  \n"
                 f"{label_partido(perd)}: **{row_2t['share_pred_B']:.1%}** "
-                f"(IC 90%: {row_2t['share_lower_B']:.1%} – {row_2t['share_upper_B']:.1%})  \n"
-                f"Eleitorado: {row_2t['eleitorado_uf']:,.0f}"
+                f"(90% CI: {row_2t['share_lower_B']:.1%} – {row_2t['share_upper_B']:.1%})  \n"
+                f"Electorate: {row_2t['eleitorado_uf']:,.0f}"
             )
             st.divider()
 
@@ -636,15 +617,15 @@ def main() -> None:
                 lambda s: label_uf(s))
             display = display[["Estado", "vencedor", "share_pred_A",
                                 "share_pred_B", "eleitorado_uf"]]
-            display.columns = ["Estado", "Vencedor", "PT %", "PL %", "Eleitorado"]
-            display["Vencedor"] = display["Vencedor"].map(label_partido)
+            display.columns = ["State", "Winner", "PT %", "PL %", "Electorate"]
+            display["Winner"] = display["Winner"].map(label_partido)
             display["PT %"] = display["PT %"].map("{:.1%}".format)
             display["PL %"] = display["PL %"].map("{:.1%}".format)
-            display["Eleitorado"] = display["Eleitorado"].map("{:,.0f}".format)
-            display = display.sort_values("Estado")
+            display["Electorate"] = display["Electorate"].map("{:,.0f}".format)
+            display = display.sort_values("State")
 
             def _highlight(row):
-                c = hex_rgba(cor(row["Vencedor"]), 0.15)
+                c = hex_rgba(cor(row["Winner"]), 0.15)
                 return [f"background-color: {c}"] * len(row)
 
             st.dataframe(
@@ -654,10 +635,129 @@ def main() -> None:
                 hide_index=True,
             )
 
-    # ── Tab 5: Tabelas raw ───────────────────────────────────────────────────
+    # ── Tab 5: Analysis ──────────────────────────────────────────────────────
+    with tab_analysis:
+        st.subheader("Forecast Analysis")
+
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            st.markdown("#### 2nd Round Margin by State (PT − PL)")
+            df_m = uf_2t.copy()
+            df_m["margin"] = df_m["share_pred_A"] - df_m["share_pred_B"]
+            df_m = df_m.sort_values("margin")
+            fig_m = go.Figure(go.Bar(
+                y=df_m["sigla_uf"],
+                x=df_m["margin"],
+                orientation="h",
+                marker_color=[cor("PT") if m > 0 else cor("PL") for m in df_m["margin"]],
+                text=[f"{m:+.1%}" for m in df_m["margin"]],
+                textposition="outside",
+                cliponaxis=False,
+                customdata=df_m[["share_pred_A", "share_pred_B", "eleitorado_uf"]].values,
+                hovertemplate=(
+                    "<b>%{y}</b><br>"
+                    f"{label_partido('PT')}: %{{customdata[0]:.1%}}<br>"
+                    f"{label_partido('PL')}: %{{customdata[1]:.1%}}<br>"
+                    "Electorate: %{customdata[2]:,.0f}<extra></extra>"
+                ),
+            ))
+            fig_m.add_vline(x=0, line_color=_MUTED, line_width=1)
+            fig_m.update_layout(
+                xaxis=dict(tickformat="+.0%", color=_MUTED, gridcolor=_BORDER,
+                           range=[-0.38, 0.38]),
+                yaxis=dict(tickfont=dict(size=11, color=_TEXT), showgrid=False),
+                margin=dict(l=40, r=70, t=10, b=20),
+                height=max(500, len(df_m) * 22),
+                plot_bgcolor=_BG2, paper_bgcolor=_BG, font=dict(color=_TEXT),
+            )
+            st.plotly_chart(fig_m, use_container_width=True)
+            st.caption("Positive = PT leads; negative = PL (Flávio) leads.")
+
+        with col_b:
+            st.markdown("#### Forecast Uncertainty by State (90% CI width)")
+            df_ci = uf_2t.copy()
+            df_ci["ci_width"] = df_ci["share_upper_A"] - df_ci["share_lower_A"]
+            df_ci = df_ci.sort_values("ci_width", ascending=True)
+            fig_ci = go.Figure(go.Bar(
+                y=df_ci["sigla_uf"],
+                x=df_ci["ci_width"],
+                orientation="h",
+                marker_color=[cor(v) for v in df_ci["vencedor"]],
+                text=[f"{w:.1%}" for w in df_ci["ci_width"]],
+                textposition="outside",
+                cliponaxis=False,
+                hovertemplate="<b>%{y}</b><br>CI width: %{x:.1%}<extra></extra>",
+            ))
+            fig_ci.update_layout(
+                xaxis=dict(tickformat=".0%", color=_MUTED, gridcolor=_BORDER),
+                yaxis=dict(tickfont=dict(size=11, color=_TEXT), showgrid=False),
+                margin=dict(l=40, r=70, t=10, b=20),
+                height=max(500, len(df_ci) * 22),
+                plot_bgcolor=_BG2, paper_bgcolor=_BG, font=dict(color=_TEXT),
+            )
+            st.plotly_chart(fig_ci, use_container_width=True)
+            st.caption("Color = projected 2nd round winner. Wider bar = more uncertain prediction.")
+
+        st.divider()
+
+        st.markdown("#### Round 1: PT vs PL vote share by state")
+        pt_r1 = (uf_1t[uf_1t["sigla_partido"] == "PT"]
+                 [["sigla_uf", "share_pred", "eleitorado_uf"]]
+                 .rename(columns={"share_pred": "pt"}))
+        pl_r1 = (uf_1t[uf_1t["sigla_partido"] == "PL"]
+                 [["sigla_uf", "share_pred"]]
+                 .rename(columns={"share_pred": "pl"}))
+        sc = pt_r1.merge(pl_r1, on="sigla_uf")
+        lim = max(sc["pt"].max(), sc["pl"].max()) * 1.12
+
+        fig_sc = go.Figure()
+        fig_sc.add_trace(go.Scatter(
+            x=[0, lim], y=[0, lim], mode="lines",
+            line=dict(color=_BORDER, dash="dash", width=1),
+            showlegend=False, hoverinfo="skip",
+        ))
+        fig_sc.add_trace(go.Scatter(
+            x=sc["pl"], y=sc["pt"],
+            mode="markers+text",
+            text=sc["sigla_uf"],
+            textposition="top center",
+            textfont=dict(size=9, color=_MUTED),
+            marker=dict(
+                size=(sc["eleitorado_uf"] / sc["eleitorado_uf"].max() * 44 + 7).tolist(),
+                color=[cor("PT") if pt > pl else cor("PL")
+                       for pt, pl in zip(sc["pt"], sc["pl"])],
+                opacity=0.85,
+                line=dict(width=1, color=_BORDER),
+            ),
+            customdata=sc[["sigla_uf", "pt", "pl", "eleitorado_uf"]].values,
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                f"{label_partido('PT')}: %{{customdata[1]:.1%}}<br>"
+                f"{label_partido('PL')}: %{{customdata[2]:.1%}}<br>"
+                "Electorate: %{customdata[3]:,.0f}<extra></extra>"
+            ),
+            showlegend=False,
+        ))
+        fig_sc.update_layout(
+            xaxis=dict(title=f"{label_partido('PL')} share (R1)", tickformat=".0%",
+                       color=_MUTED, gridcolor=_BORDER, range=[0, lim]),
+            yaxis=dict(title=f"{label_partido('PT')} share (R1)", tickformat=".0%",
+                       color=_MUTED, gridcolor=_BORDER, range=[0, lim]),
+            margin=dict(l=60, r=20, t=10, b=60),
+            height=500,
+            plot_bgcolor=_BG2, paper_bgcolor=_BG, font=dict(color=_TEXT),
+        )
+        st.plotly_chart(fig_sc, use_container_width=True)
+        st.caption(
+            "Bubble size = electorate size. "
+            "Above the diagonal = PT leads in that state; below = PL (Flávio) leads."
+        )
+
+    # ── Tab 6: Tabelas raw ───────────────────────────────────────────────────
     with tab_dados:
-        st.subheader("Dados brutos")
-        with st.expander("1º Turno Nacional", expanded=False):
+        st.subheader("Raw Data")
+        with st.expander("National Round 1", expanded=False):
             st.dataframe(
                 nac_1t.sort_values("share_pred", ascending=False)
                        .style.format({"share_pred": "{:.4f}", "share_lower": "{:.4f}",
@@ -665,15 +765,15 @@ def main() -> None:
                 use_container_width=True,
                 hide_index=True,
             )
-        with st.expander("2º Turno Nacional", expanded=False):
+        with st.expander("National Round 2", expanded=False):
             st.dataframe(nac_2t, use_container_width=True, hide_index=True)
-        with st.expander("1º Turno por UF (completo)", expanded=False):
+        with st.expander("Round 1 by State (complete)", expanded=False):
             st.dataframe(
                 uf_1t.sort_values(["sigla_uf", "share_pred"], ascending=[True, False]),
                 use_container_width=True,
                 hide_index=True,
             )
-        with st.expander("2º Turno por UF", expanded=False):
+        with st.expander("Round 2 by State", expanded=False):
             st.dataframe(uf_2t.sort_values("sigla_uf"), use_container_width=True, hide_index=True)
 
 
