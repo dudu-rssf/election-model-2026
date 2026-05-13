@@ -415,26 +415,7 @@ def main() -> None:
     import streamlit.components.v1 as _components
     _components.html(_TAB_JS, height=0, scrolling=False)
 
-    # ── Sidebar ──────────────────────────────────────────────────────────────
-    with st.sidebar:
-        st.title("🗳️ Model 2026")
-        st.caption(f"Mode: **{MODE.upper()}** · Python {sys.version.split()[0]}")
-        st.markdown(
-            "Bottom-up forecast: municipality → state → national.  \n"
-            "**Model:** LightGBM + isotonic calibration + Mondrian conformal.  \n"
-            "**Poll snapshot:** May/2026."
-        )
-        st.divider()
-        st.markdown(
-            "**Key caveats**\n"
-            "- May/2026 polls (~5 months before). Re-run before 1st round (Sep/2026).\n"
-            "- PSD (Caiado ~5%) and MISSÃO (~2.7%) outside model universe.\n"
-            "- PT may be underestimated by ~5pp (historical pattern in 2022).\n"
-            "- National CI coverage = 63.6%; state = 77.8%.\n"
-            "- 2nd round uses qualitative transfer matrix, not trained."
-        )
-        st.divider()
-        st.caption("Intervals = 90% CI (Mondrian conformal by bin)")
+    st.markdown("<style>[data-testid='stSidebar']{display:none}</style>", unsafe_allow_html=True)
 
     # ── Carrega dados ────────────────────────────────────────────────────────
     nac_1t = load_nac_1t()
@@ -444,7 +425,7 @@ def main() -> None:
 
     # ── Header com headline numbers ──────────────────────────────────────────
     st.title("2026 Presidential Elections — Model Forecast")
-    st.caption("Based on TSE historical data + May/2026 polls. See caveats in the sidebar.")
+    st.caption("Based on TSE historical data + May/2026 polls.")
 
     row = st.columns(4)
     nac_sorted = nac_1t.sort_values("share_pred", ascending=False).reset_index(drop=True)
